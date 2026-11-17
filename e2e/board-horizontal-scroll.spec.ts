@@ -47,11 +47,13 @@ test("Given a wide board, when dragging headers and empty space, then the board 
 
   const empty = board.getByRole("region", { name: "Doing", exact: true }).locator(".empty-column")
   await expect(empty).toHaveCSS("cursor", "grab")
+  await empty.scrollIntoViewIfNeeded()
   const emptyBounds = (await empty.boundingBox())!
   const emptyX = emptyBounds.x + emptyBounds.width / 2
   const emptyY = emptyBounds.y + emptyBounds.height / 2
   await page.mouse.move(emptyX, emptyY)
   await page.mouse.down()
+  await expect(board).toHaveCSS("cursor", "grabbing")
   await page.mouse.move(emptyX - 100, emptyY)
   await page.mouse.up()
   await expect.poll(scrollLeft).toBeGreaterThan(75)
@@ -63,7 +65,8 @@ test("Given a wide board, when dragging headers and empty space, then the board 
   await board.getByRole("button", { name: /Open Review with/ }).click()
   await board.evaluate(el => { el.scrollLeft = 0 })
   await expect.poll(scrollLeft).toBe(0)
-  await page.mouse.move(400, y)
+  const wheelBounds = (await header.boundingBox())!
+  await page.mouse.move(400, wheelBounds.y + wheelBounds.height / 2)
   await page.keyboard.down("Shift")
   await page.mouse.wheel(0, 180)
   await page.keyboard.up("Shift")
