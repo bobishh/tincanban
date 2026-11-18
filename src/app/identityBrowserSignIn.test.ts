@@ -12,6 +12,31 @@ import { createApprovedSignInCompletion, createIdentityBrowserSignIn, readPendin
 describe("Identity browser sign-in", () => {
   afterEach(() => { vi.unstubAllGlobals() })
 
+  it("Given explicit sign-in saves local signing keys, when browser persistence is pending, then request protection once without blocking authentication", async () => {
+    const app = (await createRecoverableIdentity("better", "App")).profile
+    let finish!: (granted: boolean) => void
+    const persist = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve }))
+    vi.stubGlobal("navigator", { storage: { persist } })
+    const options = { profile: app, portalOrigin: "https://identity.example", applicationOrigin: "https://boards.example",
+      returnPath: "/", rustyServicePins: [] }
+    try {
+      const { pending } = await createIdentityBrowserSignIn(options)
+      expect(pending.request.payload.deviceId).toBe(app.device.deviceId)
+      await createIdentityBrowserSignIn(options)
+      expect(persist).toHaveBeenCalledOnce()
+    } finally { finish?.(false) }
+  })
+
+  it.each(["denied", "rejected"])("Given persistent storage is %s by the browser, when sign-in starts, then preserve the same device and still create its authorization request", async outcome => {
+    const app = (await createRecoverableIdentity("better", "App")).profile
+    const persist = vi.fn(() => outcome === "denied" ? Promise.resolve(false) : Promise.reject(new Error("Storage policy denied")))
+    vi.stubGlobal("navigator", { storage: { persist } })
+    const { pending } = await createIdentityBrowserSignIn({ profile: app,
+      portalOrigin: "https://identity.example", applicationOrigin: "https://boards.example", returnPath: "/", rustyServicePins: [] })
+    expect(pending.request.payload.deviceId).toBe(app.device.deviceId)
+    expect(persist).toHaveBeenCalledOnce()
+  })
+
   it("Given a configured catalog service and a cold Identity profile, when ordinary sign-in starts, then its exact service key is included for Identity approval", async () => {
     const app = (await createRecoverableIdentity("better", "Fresh app")).profile
     const service = (await createRecoverableIdentity("better", "Catalog service")).profile

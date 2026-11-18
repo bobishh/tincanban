@@ -62,7 +62,9 @@ rather than being silently skipped by the core browser suite.
 
 ## Sign in and restore boards
 
-Sign in saves the approved app device independently of board loading. The app then
+Sign in saves the approved app device independently of board loading. The app
+asks the browser to protect local signing keys from automatic storage eviction;
+denial does not block sign-in. The app then
 loads the approved Identity catalog and existing board copies from its configured
 Rusty services. The private catalog also discovers open devices of the same
 Identity. If a board has no available Rusty copy, an approved device can receive

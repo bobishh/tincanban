@@ -270,8 +270,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 
+const persistenceRequests = new WeakSet<StorageManager>()
+
 /** Load request cryptography only when the user signs in or an approval returns. */
 export async function createIdentityBrowserSignIn(options: Parameters<typeof Protocol.createIdentityBrowserSignIn>[0]) {
+  const storage = typeof navigator === "undefined" ? undefined : navigator.storage
+  if (storage?.persist && !persistenceRequests.has(storage)) {
+    persistenceRequests.add(storage)
+    // Protect local signing keys when supported, without delaying authentication.
+    void Promise.resolve().then(() => storage.persist()).catch(() => {})
+  }
   return (await import("./identityBrowserSignInProtocol")).createIdentityBrowserSignIn(options)
 }
 
