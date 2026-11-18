@@ -21,7 +21,10 @@ const key = (personId: string) => `tincanban.identity-workspace-routes.v1.${pers
 const valueSchema = z.object({ personId: z.string().min(1).max(128),
   envelopes: z.array(z.unknown()).max(512) }).strict()
 const storedSchema = valueSchema.extend({ version: z.literal(1) }).strict()
-const maxCatalogBytes = 900 * 1024
+// Repeated signed ledgers compress well; bound both their decoded working set
+// and the encoded component that shares the 1 MiB profile manifest.
+const maxCatalogBytes = 8 * 1024 * 1024
+const maxPackedCatalogBytes = 900 * 1024
 const maxEnvelopeCount = 512
 
 export class WorkspaceConnectionConflict extends Error {
@@ -135,7 +138,7 @@ async function normalize(personId: string, raw: unknown): Promise<WorkspaceRoute
     envelopeAuthorityKey(left).localeCompare(envelopeAuthorityKey(right)))
   if (envelopes.length > maxEnvelopeCount) throw new Error("Workspace route recovery has too many authority variants")
   const result = { personId, envelopes }
-  if (new TextEncoder().encode(JSON.stringify(result)).byteLength > maxCatalogBytes) {
+  if (new TextEncoder().encode(JSON.stringify({ version: 1, ...result })).byteLength > maxCatalogBytes) {
     throw new Error("Workspace route recovery exceeds size limit")
   }
   return result
@@ -146,7 +149,7 @@ async function readComponent(manifest: Manifest): Promise<WorkspaceRouteRecovery
   const accept = async (name: string, component: IdentityDeviceComponent) => {
     if (!isIdentityWorkspaceRouteRecoveryComponent(name, component)) return
     const value = component.schema === packedSchema
-      ? unpackWorkspaceRoutes(manifest.personId, component.value, maxCatalogBytes)
+      ? unpackWorkspaceRoutes(manifest.personId, component.value, maxCatalogBytes, maxPackedCatalogBytes)
       : component.value
     const checked = validateOptionalIdentityComponent(componentName, { schema, required: false, value: value as Record<string, unknown> })
     if (checked.value.personId !== manifest.personId) throw new Error("Workspace route recovery identity mismatch")
@@ -168,7 +171,7 @@ export function isIdentityWorkspaceRouteRecoveryComponent(name: string, componen
 export async function identityWorkspaceRouteRecoveryComponent(value: WorkspaceRouteRecovery): Promise<IdentityDeviceComponent> {
   const checked = await normalize(value.personId, value)
   validateOptionalIdentityComponent(componentName, { schema, required: false, value: checked })
-  const packed = packWorkspaceRoutes(checked, maxCatalogBytes)
+  const packed = packWorkspaceRoutes(checked, maxCatalogBytes, maxPackedCatalogBytes)
   return { schema: packedSchema, required: false, value: packed }
 }
 

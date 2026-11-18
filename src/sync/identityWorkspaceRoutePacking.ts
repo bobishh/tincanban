@@ -2,17 +2,26 @@ import { zlibSync, unzlibSync } from "fflate"
 import { fromBase64Url, toBase64Url } from "../domain/identity"
 
 /** Bound inflated bytes as well as the transport frame; retain signed JSON exactly. */
-export function packWorkspaceRoutes<T extends { personId: string }>(value: T, maximumBytes: number): Record<string, unknown> {
+export function packWorkspaceRoutes<T extends { personId: string }>(value: T, maximumBytes: number,
+  maximumPackedBytes = maximumBytes): Record<string, unknown> {
   const bytes = new TextEncoder().encode(JSON.stringify(value))
   if (bytes.length > maximumBytes) throw new Error("Workspace route recovery exceeds size limit")
-  return { personId: value.personId, uncompressedBytes: bytes.length, packed: toBase64Url(zlibSync(bytes)) }
+  const packed = { personId: value.personId, uncompressedBytes: bytes.length, packed: toBase64Url(zlibSync(bytes)) }
+  assertPackedSize(packed, maximumPackedBytes)
+  return packed
 }
 
-export function unpackWorkspaceRoutes(personId: string, value: Record<string, unknown>, maximumBytes: number): unknown {
+function assertPackedSize(value: Record<string, unknown>, maximumBytes: number): void {
+  if (new TextEncoder().encode(JSON.stringify(value)).length > maximumBytes) throw new Error("Workspace route recovery exceeds size limit")
+}
+
+export function unpackWorkspaceRoutes(personId: string, value: Record<string, unknown>, maximumBytes: number,
+  maximumPackedBytes = maximumBytes): unknown {
+  assertPackedSize(value, maximumPackedBytes)
   const { uncompressedBytes, packed } = value
   if (value.personId !== personId || !Number.isSafeInteger(uncompressedBytes) ||
       (uncompressedBytes as number) < 1 || (uncompressedBytes as number) > maximumBytes ||
-      typeof packed !== "string" || packed.length > Math.ceil(maximumBytes * 4 / 3) + 1024 ||
+      typeof packed !== "string" || packed.length > maximumPackedBytes ||
       Object.keys(value).some(key => !["personId", "uncompressedBytes", "packed"].includes(key))) {
     throw new Error("Invalid packed workspace route recovery")
   }

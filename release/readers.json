@@ -4,7 +4,8 @@
     "privateReplicas": 5,
     "workspaceSnapshot": 3,
     "instanceManagementActions": 3,
-    "workspaceDeparture": 1
+    "workspaceDeparture": 1,
+    "workspaceRouteRecovery": 1
   },
   "automation": {
     "automationState": 5,

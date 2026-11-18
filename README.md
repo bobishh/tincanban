@@ -96,8 +96,12 @@ workspace transport credential. A restored device checks that evidence against
 workspace authority before reconnecting to participants. A saved address is a
 bootstrap contact, not proof that a device is online. The optional contact component
 uses bounded compression while retaining support for earlier JSON snapshots;
-decompressed data still passes the same signature and authority checks. Recovery
-contacts retain every live lease and the two most recent expired or legacy
+decompressed data still passes the same signature and authority checks. Route
+components retain a 900 KiB encoded limit and an 8 MiB decoded limit, so
+repeated signed ledgers can merge without exceeding the profile's 1 MiB wire
+budget. The `workspaceRouteRecovery@1` reader contract prevents rollback to
+clients that cannot read these expanded catalogs.
+Recovery contacts retain every live lease and the two most recent expired or legacy
 addresses per device; old browser instances do not accumulate indefinitely.
 Direct peer delivery does
 not wait for Rusty access registration; unavailable storage retries independently.

@@ -56,6 +56,44 @@ async function decodedRoutes(component: IdentityDeviceComponent) {
     components: { workspaceRouteRecovery: component } })
 }
 
+it("Given individually bounded catalogs whose merged signed evidence exceeds the old JSON budget, when importing and exporting repeatedly, then retain every connection within the compressed profile budget", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const personId = owner.identity.personId
+  const envelopes = Array.from({ length: 100 }, (_, index) => ({ version: 1 as const,
+    workspaceId: `board-${index}`, ownerPersonId: personId, ownerPublicKey: owner.identity.publicKey,
+    ownerCertificates: Array.from({ length: 32 }, () => owner.certificate),
+    transportSecret: `original-secret-${index}`, epoch: 1, peers: [], revocations: [] }))
+  const importCatalog = async (part: typeof envelopes) => {
+    const component = await identityWorkspaceRouteRecoveryComponent({ personId, envelopes: part })
+    await compareAndSwapLocal(await planIdentityWorkspaceRouteRecoveryImport({ personId,
+      components: { workspaceRouteRecovery: component } }))
+  }
+  expect(new TextEncoder().encode(JSON.stringify({ personId, envelopes })).byteLength).toBeGreaterThan(900 * 1024)
+  await importCatalog(envelopes.slice(0, 50))
+  await importCatalog(envelopes.slice(50))
+  const expected = [...envelopes].sort((a, b) => a.workspaceId.localeCompare(b.workspaceId))
+  expect((await readIdentityWorkspaceRouteRecovery(personId)).envelopes).toEqual(expected)
+  const component = await identityWorkspaceRouteRecoveryComponent({ personId, envelopes })
+  expect(new TextEncoder().encode(JSON.stringify(component)).byteLength).toBeLessThan(900 * 1024)
+  const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+  for (const envelope of envelopes) registerWorkspaceInRoot(root, envelope.workspaceId, envelope.workspaceId, "grant-hash")
+  await confirmIdentityAuthorityFixture(root, [owner.certificate])
+  const manifest = await createIdentityDeviceTransfer(root, [owner.certificate])
+  const wire = encodeIdentityDeviceState(manifest)
+  expect(wire.byteLength).toBeLessThan(1024 * 1024)
+  expect((await readIdentityWorkspaceRouteRecoveryComponent(decodeIdentityDeviceState(wire, personId))).envelopes).toEqual(expected)
+  for (let pass = 0; pass < 2; pass++) {
+    await compareAndSwapLocal(await planIdentityWorkspaceRouteRecoveryImport({ personId,
+      components: { workspaceRouteRecovery: component } }))
+    expect((await decodedRoutes(component)).envelopes).toEqual(expected)
+    expect((await readIdentityWorkspaceRouteRecovery(personId)).envelopes).toEqual(expected)
+  }
+  const oversized = { ...component, value: { ...component.value, uncompressedBytes: 8 * 1024 * 1024 + 1 } }
+  await expect(planIdentityWorkspaceRouteRecoveryImport({ personId,
+    components: { workspaceRouteRecovery: oversized } })).rejects.toThrow(/Invalid packed/)
+  expect((await readIdentityWorkspaceRouteRecovery(personId)).envelopes).toEqual(expected)
+})
+
 it("Given many expired browser instances for one device, when exporting recovery contacts, then keep recent fallback contacts without growing the identity catalog forever", async () => {
   const owner = await bootstrapIdentity("Owner")
   const workspaceId = "bounded-recovery-contacts"

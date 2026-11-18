@@ -3,6 +3,14 @@ import { packWorkspaceRoutes, unpackWorkspaceRoutes } from "./identityWorkspaceR
 
 const maximum = 900 * 1024
 
+it("Given compressed routes with little repetition, when their transport budget is smaller than the inflated budget, then reject oversized output and input", () => {
+  const text = Array.from(crypto.getRandomValues(new Uint8Array(8192)), byte => byte.toString(16).padStart(2, "0")).join("")
+  const value = { personId: "owner", text }
+  expect(() => packWorkspaceRoutes(value, maximum, 1024)).toThrow(/size limit/)
+  const packed = packWorkspaceRoutes(value, maximum)
+  expect(() => unpackWorkspaceRoutes("owner", packed, maximum, 1024)).toThrow(/size limit/)
+})
+
 it("Given generated Unicode records and repeated proof-shaped data, when packing and unpacking, then preserve every JSON value exactly", () => {
   const alphabet = ["a", "é", "Ж", "🚲", "\u0000", "\n", "\"", "\\"]
   for (let seed = 0; seed < 64; seed++) {
