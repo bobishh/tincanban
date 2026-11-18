@@ -94,7 +94,10 @@ export async function activateIdentityDeviceTransfer(input: Transfer, ensureCurr
     if (!options.deferEffects) await resumeIdentityDeviceActivation(manifest.personId, ensureCurrent)
     const previous = await readLocal(activationKey(manifest.personId))
     if (previous !== null && canonicalizeJson((JSON.parse(previous) as { manifest?: unknown }).manifest) !== canonicalizeJson(manifest)) {
-      throw new Error("Previous device-state activation is unfinished")
+      if (options.deferEffects) throw new Error("Previous device-state activation is unfinished")
+      // Another importer committed after our recovery check. Finish that
+      // durable projection on the next attempt before planning this transfer.
+      continue
     }
     const plan = await activationPlan(transfer, options, previous)
     ensureCurrent()

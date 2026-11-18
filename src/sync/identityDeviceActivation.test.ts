@@ -5,7 +5,8 @@ import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "
 import { defaultStorage } from "../storage"
 import * as local from "../localDb"
 import { applyIdentityDeviceTransfer, createIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
-import { resumeIdentityDeviceActivation } from "./identityDeviceActivation"
+import { activateIdentityDeviceTransfer, resumeIdentityDeviceActivation } from "./identityDeviceActivation"
+import { identityDeviceActivationKey } from "./identityDeviceActivationState"
 import { readIdentityStateRevision } from "../identityStateRevision"
 import { createDeviceRevocation, createIdentityAuthorityView, createIdentityEnrollmentDevice, createIdentityProfileOperation,
   verifyIdentityDeviceAuthority } from "@meta-uber/mesh-identity"
@@ -33,6 +34,29 @@ it("Given a new identity catalog reference, When its authenticated state is appl
   const revision = await readIdentityStateRevision()
   expect(await applyIdentityDeviceTransfer(transfer, () => {})).toBe(false)
   expect(await readIdentityStateRevision()).toBe(revision)
+})
+
+it("Given two authenticated profile imports race after checking an empty activation slot, when the first commits, then finish its projection and merge the second without pausing sync", async () => {
+  const { owner, root, transfer: first } = await fixture()
+  const incoming = structuredClone(root)
+  registerWorkspaceInRoot(incoming, "concurrent-board", "concurrent-board", "genesis")
+  const second = await readIdentityDeviceTransfer(await createIdentityDeviceTransfer(incoming, [owner.certificate]), owner.identity.personId)
+  const key = identityDeviceActivationKey(owner.identity.personId)
+  const originalRead = local.readLocal
+  let reads = 0
+  const read = vi.spyOn(local, "readLocal").mockImplementation(async name => {
+    if (name === key && ++reads === 2) {
+      await activateIdentityDeviceTransfer(first, () => {}, { deferEffects: true })
+    }
+    return originalRead(name)
+  })
+  try {
+    await applyIdentityDeviceTransfer(second, () => {})
+    const restored = await defaultStorage.loadPersonalRoot(root.rootId)
+    expect(restored?.workspaces["new-board"]).toBeDefined()
+    expect(restored?.workspaces["concurrent-board"]).toBeDefined()
+    expect(await originalRead(key)).toBeNull()
+  } finally { read.mockRestore() }
 })
 
 it("Given one existing component is invalid, when importing a validated device bundle, then leave every component unchanged", async () => {
