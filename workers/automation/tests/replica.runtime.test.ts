@@ -2008,6 +2008,71 @@ it("Given a newly authored and admitted Lead, when its controls and candidates a
   } finally { admission.mockRestore(); vi.useRealTimers(); }
 });
 
+it("Given durably admitted evidence, when a fresh request restores the same replica, then reuse verification without replay and still enforce grant expiry", async () => {
+  const data = await typedFixture();
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  const admission = vi.spyOn(WasmStateCore, "evaluateCausalAdmission").mockImplementation(() => {
+    throw new Error("Unchanged durable evidence was replayed");
+  });
+  const persisted: string[] = [];
+  try {
+    const restored = await AutomationReplica.restore(replica.serialize(), data.automation, async value => { persisted.push(value); });
+    expect(restored.controlForRuntime().state).toBe("active");
+    expect(persisted).toEqual([]);
+    expect(admission).not.toHaveBeenCalled();
+    vi.useFakeTimers();
+    vi.setSystemTime(data.packet.grant.payload.automation!.expiresAt + 1);
+    await expect(AutomationReplica.restore(restored.serialize(), data.automation, async () => {})).rejects.toThrow(/expired/);
+  } finally { admission.mockRestore(); vi.useRealTimers(); }
+});
+
+it.each(["document", "authority", "proof", "classification", "device key", "policy", "malformed classification"])("Given a sealed admission, when its %s changes, then reject cache reuse and require full verification", async field => {
+  const data = await typedFixture();
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  const state = JSON.parse(replica.serialize());
+  if (field === "document") {
+    const doc = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(state.rawDocument));
+    const changed = Automerge.change(doc, draft => { draft.title = "Unverified change"; });
+    state.rawDocument = encodeBlindBytes(Automerge.save(changed));
+    Automerge.free(changed);
+  }
+  if (field === "authority") state.authority.genesisEpoch++;
+  if (field === "proof") state.authorizations[0].signed.signature = "A".repeat(86);
+  if (field === "classification") state.admissionCache.payload.classification.decisions[0].status.role = "visitor";
+  if (field === "malformed classification") state.admissionCache.payload.classification.decisions[0] = null;
+  const policy = field === "policy" ? vi.spyOn(WasmStateCore, "causalAdmissionPolicyId").mockReturnValue("changed-policy") : undefined;
+  const profile = field === "device key" ? { ...data.automation,
+    device: { ...data.automation.device, publicKey: "A".repeat(43) } } : data.automation;
+  const admission = vi.spyOn(WasmStateCore, "evaluateCausalAdmission").mockImplementation(() => { throw new Error("Full verification required"); });
+  try {
+    await expect(AutomationReplica.restore(JSON.stringify(state), profile, async () => {})).rejects.toThrow("Full verification required");
+    expect(admission).toHaveBeenCalledOnce();
+  } finally { admission.mockRestore(); policy?.mockRestore(); }
+});
+
+it("Given admitted automation history, when one local command creates and moves a card, then verify each new change without replaying earlier history", async () => {
+  const data = await typedFixture();
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  const admission = vi.spyOn(WasmStateCore, "evaluateCausalAdmission").mockImplementation(() => {
+    throw new Error("Local command replayed admitted history");
+  });
+  try {
+    const created = await replica.createLead("incremental-create", { company: "Example", role: "Engineer" }, {});
+    const candidate = replica.candidates().find(card => card.cardId === created.cardId)!;
+    await replica.moveCard("incremental-move", created.cardId, data.packet.bindings.columns.interview, candidate.workflow!);
+    expect(replica.candidates().find(card => card.cardId === created.cardId)?.columnId).toBe(data.packet.bindings.columns.interview);
+    expect(admission).not.toHaveBeenCalled();
+    const restored = await AutomationReplica.restore(replica.serialize(), data.automation, async () => {});
+    expect(restored.candidates().find(card => card.cardId === created.cardId)?.columnId).toBe(data.packet.bindings.columns.interview);
+    // Readers without the optional local cache must admit the same signed history.
+    admission.mockRestore();
+    const uncached = JSON.parse(replica.serialize());
+    delete uncached.admissionCache;
+    const replayed = await AutomationReplica.restore(JSON.stringify(uncached), data.automation, async () => {});
+    expect(replayed.candidates().find(card => card.cardId === created.cardId)?.columnId).toBe(data.packet.bindings.columns.interview);
+  } finally { admission.mockRestore(); }
+});
+
 it("Given already verified workspace evidence, when controls are checked repeatedly, then reuse the admitted control and still reject expired grants", async () => {
   const data = await typedFixture();
   const replica = await AutomationReplica.activate(data.packet, data.automation);

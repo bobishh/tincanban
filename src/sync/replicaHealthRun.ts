@@ -11,7 +11,6 @@ export async function recordReplicaHealth(config: PrivateReplicaConfig, statuses
   deviceIssues?: Ref<Record<string, string>>): Promise<string | undefined> {
   const key = replicaKey(config)
   const previous = statuses.value[key]
-  if (deviceIssues) { const next = { ...deviceIssues.value }; delete next[key]; deviceIssues.value = next }
   statuses.value = { ...statuses.value, [key]: { phase: "syncing", lastSyncedAt: previous?.lastSyncedAt } }
   try {
     const caughtUp = await traceDiagnosticOperation("rusty.sync", {
@@ -19,6 +18,11 @@ export async function recordReplicaHealth(config: PrivateReplicaConfig, statuses
       "sync.scope.kind": config.purpose ?? "workspace", "server.address": new URL(config.origin).host,
     }, () => retryReplicaSync(operation))
     if (!isCurrent() || config.removalPending) return
+    if (caughtUp !== false && deviceIssues && key in deviceIssues.value) {
+      const next = { ...deviceIssues.value }
+      delete next[key]
+      deviceIssues.value = next
+    }
     statuses.value = { ...statuses.value, [key]: caughtUp === false
       ? { phase: "catching-up", lastSyncedAt: previous?.lastSyncedAt }
       : { phase: "synced", lastSyncedAt: Date.now() } }

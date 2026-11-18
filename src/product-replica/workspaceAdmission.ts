@@ -88,6 +88,35 @@ export function computeWorkspaceDocumentAdmission(input: Omit<WorkspaceAdmission
   return admitDocuments(input, policy, undefined, document, loadMs)
 }
 
+/** Only a private local command may extend this already fully admitted base. */
+export function extendAutomationAdmission(input: {
+  base: Automerge.Doc<WorkspaceDocumentV2>; document: Automerge.Doc<WorkspaceDocumentV2>
+  authorization: WorkspaceChangeAuthorization; authority: WorkspaceWriteAuthorityEvidence; previous: WorkspaceAdmissionResult
+}, policy: Pick<RustStateCore, "validateAuthoredAutomationChange">): WorkspaceAdmissionResult {
+  const { base, document, authorization, authority, previous } = input
+  if (base.id !== document.id || previous.pendingHashes.length || previous.quarantinedHashes.length ||
+    canonicalizeJson([...previous.authorizedHeads].sort()) !== canonicalizeJson(Automerge.getHeads(base).sort())) {
+    throw new Error("Local Automation command requires its exact admitted base")
+  }
+  const bytes = Automerge.save(document)
+  // An owned Automerge command advances its backend. Keep the pre-command
+  // admitted bytes rather than saving an older proxy of that advanced backend.
+  const admitted = policy.validateAuthoredAutomationChange(previous.authorizedDocument, { records: [authorization],
+    snapshot: admissionSnapshot(document.id, authority, bytes), nowMs: Date.now() })
+  const decisions = [...previous.decisions, { hash: admitted.hash, status: { type: "admitted" as const, role: admitted.role } }]
+  return { neededHashes: [...previous.neededHashes, admitted.hash], admittedHashes: [...previous.admittedHashes, admitted.hash],
+    decisions, verifiedAuthorizations: [...previous.verifiedAuthorizations, authorization],
+    authorizationEvidence: [...previous.authorizationEvidence, authorization], quarantinedHashes: [], pendingHashes: [],
+    authorizedDocument: bytes, authorizedHeads: Automerge.getHeads(document) }
+}
+
+function admissionSnapshot(workspaceId: string, authority: WorkspaceWriteAuthorityEvidence, bytes: Uint8Array) {
+  return { workspaceId, genesisOwner: authority.genesisOwner, genesisEpoch: authority.genesisEpoch,
+    expectedCurrentOwner: authority.currentOwner, document: Array.from(bytes), ownershipTransfers: authority.ownershipTransfers,
+    successionClaims: authority.successionClaims, revocations: authority.revocations, deviceRevocations: authority.deviceRevocations,
+    departures: authority.departures }
+}
+
 function admitDocuments(input: Omit<WorkspaceAdmissionInput, "local" | "remote">, policy: AdmissionPolicy,
   local: Automerge.Doc<WorkspaceDocumentV2> | undefined, remote: Automerge.Doc<WorkspaceDocumentV2>, loadMs: number): WorkspaceAdmissionResult {
   let phaseStarted = performance.now()
@@ -106,13 +135,7 @@ function admitDocuments(input: Omit<WorkspaceAdmissionInput, "local" | "remote">
   phaseStarted = performance.now()
   const rawAdmission = {
     records: incomingRecords,
-    snapshot: {
-      workspaceId: remote.id, genesisOwner: authority.genesisOwner, genesisEpoch: authority.genesisEpoch,
-      expectedCurrentOwner: authority.currentOwner, document: Array.from(rawBytes),
-      ownershipTransfers: authority.ownershipTransfers, successionClaims: authority.successionClaims,
-      revocations: authority.revocations, deviceRevocations: authority.deviceRevocations,
-      departures: authority.departures,
-    },
+    snapshot: admissionSnapshot(remote.id, authority, rawBytes),
     nowMs: input.now,
   }
   let plan: AdmissionPlan

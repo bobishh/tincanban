@@ -32,6 +32,7 @@ const wasm = {
 };
 const options = {
   absWorkingDir: root, bundle: true, platform: 'node', target: 'node24', format: 'esm',
+  define: { __TINCANBAN_BUILD_COMMIT__: JSON.stringify(sourceSha) },
   external: ['node:*'], plugins: [wasm], logLevel: 'info',
   banner: { js: 'import { createRequire as __participantCreateRequire } from "node:module"; const require = __participantCreateRequire(import.meta.url); const __filename = new URL(import.meta.url).pathname; const __dirname = new URL(".", import.meta.url).pathname;' },
 };

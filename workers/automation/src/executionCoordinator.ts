@@ -1384,7 +1384,14 @@ export class ExecutionCoordinator {
     this.loadedReplica = undefined;
     let owned: CachedReplica | undefined;
     const replica = await AutomationReplica.restore(serialized, profile,
-      value => this.persistReplicaState(storageSecret, value, undefined, undefined, undefined, owned), this.replicaTransport());
+      async value => {
+        if (owned) return this.persistReplicaState(storageSecret, value, undefined, undefined, undefined, owned);
+        const generation = this.ctx.storage.sql.exec<{ state_generation: string | null }>(
+          "SELECT state_generation FROM automation_replica WHERE singleton = 1",
+        ).toArray()[0]?.state_generation ?? null;
+        if (await this.loadReplicaState(storageSecret) !== serialized) throw new Error("Stored Worker replica changed during admission");
+        await this.persistReplicaState(storageSecret, value, undefined, undefined, generation);
+      }, this.replicaTransport());
     owned = { serialized, storageSecret, profileFingerprint, replica };
     this.loadedReplica = owned;
     return replica;

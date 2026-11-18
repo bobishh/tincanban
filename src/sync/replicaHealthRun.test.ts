@@ -15,6 +15,25 @@ test("Given a local replica failure, when sync pauses, then retain its cause in 
     reason: "Local replica admission failed", workspaceId: "board" }))
 })
 
+test("Given a visible device sync problem, when a background retry is pending or still catching up, then retain the problem until synchronization succeeds", async () => {
+  const statuses = ref<Record<string, ReplicaHealth>>({})
+  const key = replicaKey(config)
+  const issues = ref<Record<string, string>>({ [key]: "Saved changes need retry" })
+  let started!: () => void
+  let finish!: (value: boolean) => void
+  const began = new Promise<void>(resolve => { started = resolve })
+  const completion = new Promise<boolean>(resolve => { finish = resolve })
+  const retry = recordReplicaHealth(config, statuses, async () => { started(); return completion }, () => true, issues)
+  await began
+  const duringRetry = issues.value[key]
+  finish(false)
+  await retry
+  expect(duringRetry).toBe("Saved changes need retry")
+  expect(issues.value[key]).toBe("Saved changes need retry")
+  await recordReplicaHealth(config, statuses, async () => true, () => true, issues)
+  expect(issues.value).toEqual({})
+})
+
 test("Given a local persistence error, when sync stops, then report a device problem without blaming Rusty or exposing its exception", async () => {
   const statuses = ref<Record<string, ReplicaHealth>>({})
   const issues = ref<Record<string, string>>({})

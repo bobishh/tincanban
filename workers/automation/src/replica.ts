@@ -11,6 +11,7 @@ import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, type Inco
   parseWireHistoryBaseline, type AttachmentLocator, type HistoryBaselineFetchPort, type WireHistoryBaseline,
   type WorkspaceChangeAuthorization } from "../../../src/product-replica";
 import { mergeAuthorizationRecords } from "../../../src/product-replica/workspaceAuthorizationRecords";
+import { extendAutomationAdmission } from "../../../src/product-replica/workspaceAdmission";
 import { executeOwnedCommand } from "../../../src/domain/commands";
 import { canonicalizeJson, publicKeyId, sha256Base64Url, type SignedEnvelope } from "../../../src/domain/identityCrypto";
 import type { LocalProfile } from "../../../src/domain/identity";
@@ -43,6 +44,7 @@ import { assertWorkerHistoryCoversHeads, receiveWorkerHistoryBasis, restoreWorke
 import { deliverPublicBoard } from "../../../src/public/publicDelivery";
 import { automationPublicProjection } from "./publicBoardDelivery";
 import { automationDiagnosticContext, automationPublicDeliveryHttp, automationTelemetry, recordAutomationException, withAutomationSpan } from "./telemetry";
+import { openReplicaAdmission, sealReplicaAdmission, type ReplicaAdmissionCache } from "./replicaAdmissionCache";
 
 initSync({ module: wasmModule });
 
@@ -220,6 +222,7 @@ function measureInitialHistoryUsage(documentBytes: Uint8Array, baselineBytes?: U
 type ReplicaMetadata = Omit<ReplicaState<BlindObject>, "cursor" | "lastUploaded" | "pending"> & { contentRevision: string };
 type OpaqueChatBatch = { version: 1 | 2; capabilities?: string[]; upgradeRequired?: boolean; messages: unknown[]; profiles: unknown[]; typing: unknown[] };
 type SerializedReplica = {
+  admissionCache?: ReplicaAdmissionCache;
   version: 1 | 2 | 3 | 4 | 5 | 6;
   history?: StoredWorkerHistoryBasis;
   historyUsage?: ActiveHistoryUsage;
@@ -283,6 +286,7 @@ export class AutomationReplica {
   private admissionCache?: { rawDocument: string; authorizations: WorkspaceChangeAuthorization[];
     authority: WorkspaceWriteAuthorityEvidence; result: WorkspaceAdmissionResult;
     control?: { state: AutomationDesiredState; heads: string[] } };
+  private sealedAdmission?: ReplicaAdmissionCache;
 
   private constructor(
     private readonly profile: LocalProfile,
@@ -325,6 +329,7 @@ export class AutomationReplica {
     this.definition = serialized?.definition;
     this.tombstoned = serialized?.tombstoned === true;
     this.publicDelivery = structuredClone(serialized?.publicDelivery);
+    this.sealedAdmission = serialized?.admissionCache;
   }
 
   static async activate(packet: AutomationActivationPacket, profile: LocalProfile, expectedOrigin?: string): Promise<AutomationReplica> {
@@ -353,6 +358,7 @@ export class AutomationReplica {
       replica.rawDocument = encodeBlindBytes(sourceBytes);
       replica.definition = packet.definition;
       replica.authorizations = mergeAuthorizationRecords([], admission.verifiedAuthorizations);
+      replica.admissionCache = { rawDocument: replica.rawDocument, authorizations: replica.authorizations, authority: replica.authority, result: admission };
       replica.attachments = mergeAttachmentLocators(packet.initial.attachments);
       replica.historyUsage = measureInitialHistoryUsage(sourceBytes, replica.historyBasis?.document(),
         replica.history ? historyBaselineId(replica.history.wire) : null);
@@ -426,12 +432,33 @@ export class AutomationReplica {
       value.bindings, value.authority, value.blind.cursor, value.blind.lastUploaded,
       persist, transport, value);
     replica.historyBasis = basis;
+    const classification = await openReplicaAdmission(WasmStateCore.causalAdmissionPolicyId(), profile,
+      replica.admissionEvidence(), value.admissionCache);
+    let reusedAdmission = false;
+    if (classification) {
+      const bytes = decodeBlindBytes(replica.rawDocument);
+      const document = Automerge.load<WorkspaceDocumentV2>(bytes);
+      try {
+        const hashes = Automerge.getChangesMetaSince(document, []).map(change => change.hash).sort();
+        if (canonicalizeJson(hashes) === canonicalizeJson(classification.decisions.map(decision => decision.hash).sort())) {
+          replica.admissionCache = { rawDocument: replica.rawDocument, authorizations: replica.authorizations, authority: replica.authority,
+            result: { ...classification, neededHashes: hashes, admittedHashes: hashes,
+              verifiedAuthorizations: replica.authorizations, authorizationEvidence: replica.authorizations,
+              quarantinedHashes: [], pendingHashes: [], authorizedDocument: bytes, authorizedHeads: Automerge.getHeads(document) } };
+          reusedAdmission = true;
+        }
+      } finally { Automerge.free(document); }
+    }
     assertFullyAdmitted(await replica.revalidate(), decodeBlindBytes(replica.rawDocument));
     // Legacy fallback counters are not evidence of actual active history size.
     replica.historyUsage = measureInitialHistoryUsage(decodeBlindBytes(replica.rawDocument), basis?.document(),
       replica.history ? historyBaselineId(replica.history.wire) : null);
     replica.controlForRuntime();
     await replica.validateStoredProgress();
+    if (!reusedAdmission) {
+      await replica.refreshAdmissionCheckpoint();
+      if (replica.sealedAdmission) await persist(replica.serialize());
+    }
     return replica;
   }
 
@@ -1171,6 +1198,7 @@ export class AutomationReplica {
 
   serialize(): string {
     return JSON.stringify({ version: 6,
+      ...(this.sealedAdmission ? { admissionCache: this.sealedAdmission } : {}),
       workspaceId: this.workspaceId, blind: { ...this.blind, cursor: this.cursor, lastUploaded: this.lastUploaded },
       ...(this.history ? { history: this.history } : {}), ...(this.scopeAuthoritySnapshot ? { scopeAuthoritySnapshot: this.scopeAuthoritySnapshot } : {}),
       historyUsage: this.historyUsage,
@@ -1511,9 +1539,9 @@ export class AutomationReplica {
       ownerPublicKey: this.authority.currentOwner.publicKey,
       ownerCertificates: this.authority.currentOwner.certificates }]);
     const candidateRaw = encodeBlindBytes(Automerge.save(document));
-    const result = computeWorkspaceDocumentAdmission({ workspaceId: this.workspaceId,
-      authorization: { version: 1, records: nextAuthorizations, authority: this.authority },
-      knownAuthority: this.authority, receivedBasis: this.historyBasis, now: Date.now() }, WasmStateCore as never, document);
+    const result = extendAutomationAdmission({ base: previousDocument, document,
+      authorization: nextAuthorizations.find(record => record.signed.signature === signed.signature)!,
+      authority: this.authority, previous: this.admission() }, WasmStateCore);
     if (result.quarantinedHashes.includes(changeHash) || result.pendingHashes.includes(changeHash) || !result.admittedHashes.includes(changeHash)) {
       const decision = result.decisions.find(value => value.hash === changeHash);
       throw new Error(`Rust rejected the scoped automation change: ${JSON.stringify(decision?.status ?? "missing-admission")}`);
@@ -1577,7 +1605,23 @@ export class AutomationReplica {
 
   private async persistState(): Promise<void> {
     if (!this.persistHook) return;
-    await this.persistHook(this.serialize());
+    const previous = this.sealedAdmission;
+    await this.refreshAdmissionCheckpoint();
+    try { await this.persistHook(this.serialize()); }
+    catch (error) { this.sealedAdmission = previous; throw error; }
+  }
+
+  private async refreshAdmissionCheckpoint(): Promise<void> {
+    const cached = this.cachedAdmission();
+    this.sealedAdmission = cached && await sealReplicaAdmission(WasmStateCore.causalAdmissionPolicyId(),
+      this.profile, this.admissionEvidence(), cached.result);
+  }
+
+  private admissionEvidence() {
+    return { workspaceId: this.workspaceId, rawDocument: this.rawDocument, authorizations: this.authorizations,
+      authority: this.authority, history: this.history ?? null, scopeAuthoritySnapshot: this.scopeAuthoritySnapshot ?? null,
+      grant: this.grant, bindings: this.bindings, definition: this.definition ?? null,
+      identity: this.profile.identity, device: this.profile.device, certificate: this.profile.certificate };
   }
 }
 
