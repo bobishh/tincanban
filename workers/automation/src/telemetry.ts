@@ -49,7 +49,9 @@ export function configureAutomationTelemetry(env: AutomationTelemetryBindings): 
   try {
     const input: unknown = JSON.parse(env.OTEL_EXPORTER_OTLP_HEADERS || "{}");
     if (!input || typeof input !== "object" || Array.isArray(input) || !Object.values(input).every(value => typeof value === "string")) throw new Error("Invalid OTLP headers");
-    headers = { ...Object.fromEntries(new Headers(input as Record<string, string>)), Authorization: `Bearer ${token}` };
+    headers = {};
+    new Headers(input as Record<string, string>).forEach((value, name) => { headers[name] = value; });
+    headers.Authorization = `Bearer ${token}`;
   } catch {
     configuredTelemetry = { enabled: false, flush: async () => {} };
     return configuredTelemetry;
