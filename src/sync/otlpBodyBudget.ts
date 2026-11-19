@@ -10,7 +10,7 @@ type ExportOptions<T> = {
   finished(count: number, result: ExportResult): void
 }
 
-/** Respect TinSink's wire-body limit while keeping the official OTLP transport. */
+/** Bound serialized batches before handing them to the external OTLP exporter. */
 export function exportOtlpBatches<T>(records: T[], options: ExportOptions<T>, callback: (result: ExportResult) => void): void {
   if (!records.length) { callback({ code: ExportResultCode.SUCCESS }); return }
   const batches: Batch<T>[] = []

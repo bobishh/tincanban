@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 export function automationSecrets(environment) {
   return Object.fromEntries(Object.entries({
+    AUTOMATION_OTEL_ENDPOINT: 'OTEL_EXPORTER_OTLP_ENDPOINT',
+    AUTOMATION_OTEL_HEADERS: 'OTEL_EXPORTER_OTLP_HEADERS',
     AUTOMATION_TELEMETRY_TOKEN: 'TELEMETRY_TOKEN',
     AUTOMATION_REFLUX_SERVICE_TOKEN: 'REFLUX_SERVICE_TOKEN',
   }).filter(([source]) => environment[source]).map(([source, target]) => [target, environment[source]]));

@@ -217,14 +217,21 @@ Do not commit these values. `IDENTITY_STORAGE_SECRET` encrypts the automation id
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` and the project-scoped server
 `TELEMETRY_TOKEN` are configured, the Worker emits standard OTLP/HTTP JSON logs
-and spans to TinSink. It identifies as project `tincanban-automation`, source
-`server`, and includes the sealed release SHA as its service version. The token
+and spans through the external OpenTelemetry SDK. Collector-specific headers
+come only from `OTEL_EXPORTER_OTLP_HEADERS`; the source contains no collector
+protocol. The sealed release SHA is its service version. The token
 stays in the Worker secret binding. Exception messages, stacks and causes are
 bounded and redacted; accepted email content, board text, payloads and credentials
 are not exported as diagnostic context. Rusty HTTP requests carry W3C trace context
 from the Worker span. This source wiring and runtime tests do not establish
-production delivery; the TinSink pipeline records its independent full-chain and
-deployed-row verification.
+production delivery; verify the configured collector independently.
+
+The source configuration includes no collector address. Set the deployment
+variables `AUTOMATION_OTEL_ENDPOINT`, optional `AUTOMATION_OTEL_HEADERS`, and
+secret `AUTOMATION_TELEMETRY_TOKEN` to
+connect an external collector during release or recovery. They become runtime
+bindings through the private deployment settings file. An ordinary checkout
+without those bindings does not export diagnostics.
 
 ## Integration routing
 

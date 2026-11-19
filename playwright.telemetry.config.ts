@@ -16,6 +16,7 @@ export default defineConfig({
       VITE_SYNC_TELEMETRY_URL: "https://telemetry.invalid/events",
       VITE_OTEL_EXPORTER_OTLP_ENDPOINT: "",
       VITE_SYNC_TELEMETRY_PROJECT: "tincanban",
+      VITE_OTEL_EXPORTER_OTLP_HEADERS: JSON.stringify({ "X-Test-Project": "tincanban", "X-Test-Source": "browser" }),
       VITE_SYNC_TELEMETRY_BROWSER_KEY: "public-browser-fixture-key-0123456789",
       VITE_SYNC_TELEMETRY_LEVEL: "all",
       VITE_SYNC_TELEMETRY_SAMPLE_RATE: "1",

@@ -16,6 +16,16 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
 describe("deployment telemetry configuration and device consent", () => {
+  it("Given generic OTLP header configuration, when loaded, then only deployment-supplied headers are available", async () => {
+    vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_HEADERS", JSON.stringify({ "X-Example-Tenant": "fixture" }))
+    const config = await import("./telemetryConfig")
+    expect(config.telemetryConfig().headers).toEqual({ "x-example-tenant": "fixture" })
+  })
+  it.each(["null", "[]", '{"header":1}', "not-json"])("Given invalid exporter headers %s, when loaded, then disable diagnostics", async headers => {
+    vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_HEADERS", headers)
+    const config = await import("./telemetryConfig")
+    expect(config.telemetryConfigured()).toBe(false)
+  })
   it("Given application deployment configuration, when loaded, then sampling and batching come from the build", async () => {
     const config = await import("./telemetryConfig")
     expect(config.telemetryConfig()).toMatchObject({ enabled: true, endpoint: "https://collector.invalid/events", logsEndpoint: "https://collector.invalid/v1/logs", tracesEndpoint: "https://collector.invalid/v1/traces", project: "tincanban", sampleRate: 0.25, batchSize: 12 })
@@ -77,7 +87,8 @@ describe("deployment telemetry configuration and device consent", () => {
 it("Given distinct analytics and OTLP routes, when configuration loads, then analytics retains its events route", async () => {
   vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.invalid")
   const { telemetryConfig } = await import("./telemetryConfig")
-  expect(telemetryConfig()).toMatchObject({ analyticsEndpoint: "https://collector.invalid/events", logsEndpoint: "https://collector.invalid/v1/logs" })
+  expect(telemetryConfig()).toMatchObject({ logsEndpoint: "https://collector.invalid/v1/logs" })
+  expect(telemetryConfig()).not.toHaveProperty("analyticsEndpoint")
 })
 
 

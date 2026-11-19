@@ -39,7 +39,8 @@ export interface WorkerEnv {
   RELEASE_SHA?: string;
   /** OTLP Collector base URL. Set as a Worker variable, never a public browser value. */
   OTEL_EXPORTER_OTLP_ENDPOINT?: string;
-  /** TinSink server-source key; configure as a Worker secret. */
+  OTEL_EXPORTER_OTLP_HEADERS?: string;
+  /** Exporter credential; configure as a Worker secret. */
   TELEMETRY_TOKEN?: string;
   RELEASE_ARTIFACT_SHA256?: WorkerReleaseBindings["RELEASE_ARTIFACT_SHA256"];
   RELEASE_COHORT_ID?: WorkerReleaseBindings["RELEASE_COHORT_ID"];

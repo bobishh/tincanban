@@ -1,4 +1,4 @@
-export type TelemetryConfig = { enabled: boolean; endpoint: string; analyticsEndpoint?: string; logsEndpoint: string; tracesEndpoint: string; project: string; browserKey?: string; level: "all" | "errors"; sampleRate: number; batchSize?: number }
+export type TelemetryConfig = { enabled: boolean; endpoint: string; logsEndpoint: string; tracesEndpoint: string; project: string; browserKey?: string; headers?: Record<string, string>; level: "all" | "errors"; sampleRate: number; batchSize?: number }
 const TELEMETRY_CONFIG_KEY = "tincanban.telemetry.v2"
 const listeners = new Set<() => void>()
 function validEndpoint(endpoint: string): boolean {
@@ -36,11 +36,8 @@ function validBrowserKey(value: TelemetryConfig): boolean {
 function configuredEndpoint(legacyEndpoint: string, explicitEndpoint: string): string {
   return explicitEndpoint || legacyEndpoint
 }
-function analyticsEndpoint(legacyEndpoint: string, endpoint: string): string {
-  if (validEndpoint(legacyEndpoint)) return legacyEndpoint
-  return validEndpoint(endpoint) ? new URL("/events", endpoint).href : ""
-}
 function validateTelemetryConfig(value: TelemetryConfig): string {
+  if (!value.headers) return "Invalid exporter headers."
   if (typeof value.enabled !== "boolean" || !["all", "errors"].includes(value.level)) return "Invalid diagnostic settings."
   if (!validCollectionLimits(value)) return "Sample rate must be 0–100%, and batch size 1–50."
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.project) || value.project.length > 64) return "Project must use lowercase letters, numbers and single hyphens (up to 64 characters)."
@@ -48,6 +45,13 @@ function validateTelemetryConfig(value: TelemetryConfig): string {
   if (!value.endpoint && !value.enabled) return ""
   if (!validEndpoint(value.endpoint)) return "Use an HTTPS intake URL without credentials, query or fragment. HTTP is allowed on localhost."
   return ""
+}
+function deploymentHeaders(raw: unknown): Record<string, string> | undefined {
+  try {
+    const input: unknown = JSON.parse(String(raw || "{}"))
+    if (!input || typeof input !== "object" || Array.isArray(input) || !Object.values(input).every(value => typeof value === "string")) return undefined
+    return Object.fromEntries(new Headers(input as Record<string, string>))
+  } catch { return undefined }
 }
 function deploymentConfig(): TelemetryConfig {
   const env = import.meta.env
@@ -57,16 +61,16 @@ function deploymentConfig(): TelemetryConfig {
   const otlp = otlpEndpoints(legacyEndpoint, explicitEndpoint)
   const project = String(env.VITE_SYNC_TELEMETRY_PROJECT || "tincanban").trim()
   const browserKey = String(env.VITE_SYNC_TELEMETRY_BROWSER_KEY || "").trim()
+  const headers = deploymentHeaders(env.VITE_OTEL_EXPORTER_OTLP_HEADERS)
   const value: TelemetryConfig = { enabled: !!endpoint && !!browserKey && !!otlp, endpoint,
-    analyticsEndpoint: analyticsEndpoint(legacyEndpoint, endpoint),
-    logsEndpoint: otlp?.logsEndpoint ?? "", tracesEndpoint: otlp?.tracesEndpoint ?? "", project, browserKey,
+    logsEndpoint: otlp?.logsEndpoint ?? "", tracesEndpoint: otlp?.tracesEndpoint ?? "", project, browserKey, headers,
     level: (env.VITE_SYNC_TELEMETRY_LEVEL || "errors") as TelemetryConfig["level"],
     sampleRate: Number(env.VITE_SYNC_TELEMETRY_SAMPLE_RATE || "1"), batchSize: Number(env.VITE_SYNC_TELEMETRY_BATCH_SIZE || "50") }
   return validateTelemetryConfig(value) ? { enabled: false, endpoint: "", logsEndpoint: "", tracesEndpoint: "", project: "tincanban", browserKey: "", level: "errors", sampleRate: 0, batchSize: 50 } : value
 }
 const DEVICE_CONSENT_KEY = "tincanban.telemetry.enabled.v1"
 const deployment = deploymentConfig()
-function load(): TelemetryConfig {
+export function telemetryConsent(): boolean {
   let allowed = true
   try {
     const stored = localStorage.getItem(DEVICE_CONSENT_KEY)
@@ -80,8 +84,9 @@ function load(): TelemetryConfig {
       }
     }
   } catch { /* Unavailable preferences use the explicit deployment configuration. */ }
-  return { ...deployment, enabled: deployment.enabled && allowed }
+  return allowed
 }
+function load(): TelemetryConfig { return { ...deployment, enabled: deployment.enabled && telemetryConsent() } }
 let config = load()
 export function telemetryConfig(): TelemetryConfig { return { ...config } }
 export function telemetryConfigured(): boolean { return deployment.enabled }

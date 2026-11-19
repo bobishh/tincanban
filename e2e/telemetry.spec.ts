@@ -15,7 +15,7 @@ test("Given a real no-store intake, when repeated error batches cross the keepal
   const received: LogRecord[] = []
   const requestBytes: number[] = []
   const server = createServer((request, response) => {
-    const headers = { "Access-Control-Allow-Origin": baseURL!, "Access-Control-Allow-Headers": "authorization,content-type,x-tinsink-project,x-tinsink-source",
+    const headers = { "Access-Control-Allow-Origin": baseURL!, "Access-Control-Allow-Headers": "authorization,content-type,x-test-project,x-test-source",
       "Access-Control-Allow-Methods": "POST,OPTIONS", "Content-Type": "application/json", "Cache-Control": "no-store" }
     if (request.method === "OPTIONS") { response.writeHead(204, headers); response.end(); return }
     const chunks: Buffer[] = []
@@ -146,8 +146,8 @@ async function interceptOtlp(page: Page, status: number, records: LogRecord[] = 
   const requests: string[] = []
   for (const url of [endpoint, tracesEndpoint]) await page.route(url, async route => {
     expect(route.request().headers().authorization).toBe(`Bearer ${browserKey}`)
-    expect(route.request().headers()["x-tinsink-project"]).toBe("tincanban")
-    expect(route.request().headers()["x-tinsink-source"]).toBe("browser")
+    expect(route.request().headers()["x-test-project"]).toBe("tincanban")
+    expect(route.request().headers()["x-test-source"]).toBe("browser")
     requests.push(url)
     const payload = route.request().postDataJSON() as OtlpLogs | OtlpTraces
     if (url === endpoint) records.push(...logRecords(payload as OtlpLogs))
@@ -335,7 +335,7 @@ test("Given unavailable preference storage, when device opts out, then host pref
   expect(preference.enabled).toBe(true)
 })
 
-test("Given ordinary app use, when a user opens the board, stays active and hits an error, then analytics and error text export without routine mesh logs", async ({ page }) => {
+test("Given ordinary app use, when a user opens the board, stays active and hits an error, then errors use standard diagnostics and app usage never sends a collector envelope", async ({ page }) => {
   const analytics: Array<{ schema_version: number; events: Array<{ event: string; path: string }> }> = []
   const records: LogRecord[] = []
   await interceptOtlp(page, 200, records)
@@ -346,7 +346,7 @@ test("Given ordinary app use, when a user opens the board, stays active and hits
   await page.clock.install()
   await page.goto("/?secret=must-not-leak#private-board")
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled()
-  await expect.poll(() => analytics.flatMap(batch => batch.events).filter(event => event.event === "page_view").length).toBe(1)
+  expect(analytics).toEqual([])
   await page.evaluate(async () => {
     const { meshTrace } = await import("/src/sync/meshTrace.ts")
     for (let i = 0; i < 20; i++) meshTrace("gossip.packet", { neighbors: 1 })
@@ -359,8 +359,6 @@ test("Given ordinary app use, when a user opens the board, stays active and hits
   expect(attribute(failure, "exception.stacktrace")).toBeTruthy()
   expect(records.some(record => body(record) === "gossip.packet")).toBe(false)
   await page.clock.runFor(30_000)
-  await expect.poll(() => analytics.flatMap(batch => batch.events).some(event => event.event === "active_read")).toBe(true)
-  expect(analytics.every(batch => batch.schema_version === 1)).toBe(true)
-  expect(analytics.flatMap(batch => batch.events).every(event => event.path === "/app")).toBe(true)
+  expect(analytics).toEqual([])
   expect(JSON.stringify(analytics)).not.toMatch(/must-not-leak|private-board|secret-token|workspace_id|device_id/)
 })

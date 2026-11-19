@@ -113,8 +113,7 @@ function exporterConfig(config: TelemetryConfig, endpoint: string) {
     concurrencyLimit: 2,
     headers: {
       Authorization: `Bearer ${config.browserKey ?? ""}`,
-      "X-TinSink-Project": config.project,
-      "X-TinSink-Source": "browser",
+      ...config.headers,
     },
   }
 }
@@ -155,6 +154,7 @@ export class BrowserOtelSdk {
     this.onState = onState
     const resource = resourceFromAttributes({
       [ATTR_SERVICE_NAME]: "tincanban.browser",
+      "service.namespace": config.project,
       [ATTR_SERVICE_VERSION]: buildVersion,
       "session.id": sessionId,
     })

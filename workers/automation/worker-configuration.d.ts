@@ -5,7 +5,6 @@ interface __BaseEnv_Env {
 	AI: Ai;
 	CF_VERSION_METADATA: WorkerVersionMetadata;
 	REFLUX_ORIGIN: "https://reflux.meta-uber-engineer.dev";
-	OTEL_EXPORTER_OTLP_ENDPOINT: "https://analytics.meta-uber-engineer.dev";
 	AUTOMATION_OWNER_IDS: "QyfKlOj-8LNclXyOnPsbtudHSTEi7ecyLvFK7HZkRpY";
 	PUBLIC_ORIGIN: "https://automation.meta-uber-engineer.dev";
 	CORS_ORIGINS: "https://match.meta-uber-engineer.dev,https://tincanban.meta-uber-engineer.dev,https://meta-uber-engineer.dev";
@@ -25,7 +24,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "REFLUX_ORIGIN" | "OTEL_EXPORTER_OTLP_ENDPOINT" | "AUTOMATION_OWNER_IDS" | "PUBLIC_ORIGIN" | "CORS_ORIGINS" | "EMAIL_DOMAIN" | "INTEGRATIONS_JSON">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "REFLUX_ORIGIN" | "AUTOMATION_OWNER_IDS" | "PUBLIC_ORIGIN" | "CORS_ORIGINS" | "EMAIL_DOMAIN" | "INTEGRATIONS_JSON">> {}
 }
 declare module "*.wasm" {
 	const value: WebAssembly.Module;

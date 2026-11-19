@@ -14,6 +14,7 @@ describe("automation OpenTelemetry producers", () => {
     const telemetry = configureAutomationTelemetry({
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318",
       TELEMETRY_TOKEN: "server-test-secret",
+      OTEL_EXPORTER_OTLP_HEADERS: JSON.stringify({ "X-Test-Project": "tincanban-automation", "X-Test-Source": "server" }),
       RELEASE_SHA: "test-revision",
       SERVICE_NAME: "tincanban-executor",
     });
@@ -46,8 +47,8 @@ describe("automation OpenTelemetry producers", () => {
     expect(traces).toBeDefined();
     for (const request of [logs!, traces!]) {
       expect(request.headers.get("authorization")).toBe("Bearer server-test-secret");
-      expect(request.headers.get("x-tinsink-project")).toBe("tincanban-automation");
-      expect(request.headers.get("x-tinsink-source")).toBe("server");
+      expect(request.headers.get("x-test-project")).toBe("tincanban-automation");
+      expect(request.headers.get("x-test-source")).toBe("server");
       expect(request.body).not.toContain("server-test-secret");
       expect(request.body).not.toContain("do-not-export");
     }

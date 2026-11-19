@@ -18,6 +18,7 @@ export const automationPublicDeliveryHttp: NonNullable<PublicDeliveryInput["http
 
 export type AutomationTelemetryBindings = {
   OTEL_EXPORTER_OTLP_ENDPOINT?: string;
+  OTEL_EXPORTER_OTLP_HEADERS?: string;
   TELEMETRY_TOKEN?: string;
   RELEASE_SHA?: string;
   /** Separate runtime identity; the intake tenant and server authentication remain unchanged. */
@@ -44,11 +45,15 @@ export function configureAutomationTelemetry(env: AutomationTelemetryBindings): 
     return configuredTelemetry;
   }
 
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    "X-TinSink-Project": "tincanban-automation",
-    "X-TinSink-Source": "server",
-  };
+  let headers: Record<string, string>;
+  try {
+    const input: unknown = JSON.parse(env.OTEL_EXPORTER_OTLP_HEADERS || "{}");
+    if (!input || typeof input !== "object" || Array.isArray(input) || !Object.values(input).every(value => typeof value === "string")) throw new Error("Invalid OTLP headers");
+    headers = { ...Object.fromEntries(new Headers(input as Record<string, string>)), Authorization: `Bearer ${token}` };
+  } catch {
+    configuredTelemetry = { enabled: false, flush: async () => {} };
+    return configuredTelemetry;
+  }
   const resource = resourceFromAttributes({
     "service.name": env.SERVICE_NAME === "tincanban-executor" ? "tincanban-executor" : "tincanban-automation",
     "service.version": bounded(env.RELEASE_SHA ?? "unknown", 128),

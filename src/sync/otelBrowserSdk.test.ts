@@ -14,7 +14,7 @@ afterEach(async () => {
 })
 
 function config() {
-  return { ...telemetryConfig(), level: "all" as const, enabled: true, endpoint: "https://collector.invalid/events", logsEndpoint: "https://collector.invalid/v1/logs", tracesEndpoint: "https://collector.invalid/v1/traces", project: "tincanban", browserKey: "public-browser-fixture-key-0123456789" }
+  return { ...telemetryConfig(), level: "all" as const, enabled: true, endpoint: "https://collector.invalid/events", logsEndpoint: "https://collector.invalid/v1/logs", tracesEndpoint: "https://collector.invalid/v1/traces", project: "tincanban", headers: { "X-Test-Project": "tincanban", "X-Test-Source": "browser" }, browserKey: "public-browser-fixture-key-0123456789" }
 }
 
 describe("browser OTel SDK", () => {
@@ -252,8 +252,8 @@ describe("browser OTel SDK", () => {
     expect(requests.filter(request => request.path === "/v1/traces")).toHaveLength(1)
     for (const request of requests) {
       expect(request.headers.authorization).toBe("Bearer public-browser-fixture-key-0123456789")
-      expect(request.headers["x-tinsink-project"]).toBe("tincanban")
-      expect(request.headers["x-tinsink-source"]).toBe("browser")
+      expect(request.headers["x-test-project"]).toBe("tincanban")
+      expect(request.headers["x-test-source"]).toBe("browser")
       expect(request.body).not.toContain("schema_version")
       expect(JSON.parse(request.body)).toHaveProperty(request.path.endsWith("logs") ? "resourceLogs" : "resourceSpans")
     }

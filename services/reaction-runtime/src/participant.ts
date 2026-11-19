@@ -20,6 +20,7 @@ export function createParticipant(integrationId: string, epoch: number, storage:
     RELEASE_SHA: process.env.RELEASE_SHA,
     SERVICE_NAME: "tincanban-reaction",
     OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+    OTEL_EXPORTER_OTLP_HEADERS: process.env.OTEL_EXPORTER_OTLP_HEADERS,
     TELEMETRY_TOKEN: process.env.TELEMETRY_TOKEN,
   };
   const coordinator: ExecutionCoordinator = new ExecutionCoordinator({ storage, id: { name: integrationId }, waitUntil: promise => { void promise.catch(() => {}); } }, env, {

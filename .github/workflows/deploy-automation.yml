@@ -30,6 +30,8 @@ jobs:
       VERIFIED_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       AUTOMATION_TELEMETRY_TOKEN: ${{ secrets.AUTOMATION_TELEMETRY_TOKEN }}
+      AUTOMATION_OTEL_ENDPOINT: ${{ vars.AUTOMATION_OTEL_ENDPOINT }}
+      AUTOMATION_OTEL_HEADERS: ${{ vars.AUTOMATION_OTEL_HEADERS }}
       AUTOMATION_REFLUX_SERVICE_TOKEN: ${{ secrets.AUTOMATION_REFLUX_SERVICE_TOKEN }}
       GH_TOKEN: ${{ github.token }}
     steps:

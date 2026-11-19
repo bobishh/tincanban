@@ -52,10 +52,14 @@ jobs:
       - name: Build checked production frontend
         env:
           RELEASE_CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          ANALYTICS_CLIENT_URL: ${{ vars.ANALYTICS_CLIENT_URL }}
+          ANALYTICS_PROJECT: ${{ vars.ANALYTICS_PROJECT }}
+          ANALYTICS_BROWSER_TOKEN: ${{ vars.ANALYTICS_BROWSER_TOKEN }}
           VITE_PUBLIC_BOARD_ORIGIN: ${{ vars.VITE_PUBLIC_BOARD_ORIGIN }}
           VITE_IDENTITY_ORIGIN: ${{ vars.VITE_IDENTITY_ORIGIN || '' }}
           VITE_SYNC_TELEMETRY_URL: ${{ vars.VITE_SYNC_TELEMETRY_URL }}
           VITE_OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.VITE_OTEL_EXPORTER_OTLP_ENDPOINT }}
+          VITE_OTEL_EXPORTER_OTLP_HEADERS: ${{ vars.VITE_OTEL_EXPORTER_OTLP_HEADERS }}
           VITE_SYNC_TELEMETRY_PROJECT: ${{ vars.VITE_SYNC_TELEMETRY_PROJECT || 'tincanban' }}
           VITE_SYNC_TELEMETRY_BROWSER_KEY: ${{ vars.VITE_SYNC_TELEMETRY_BROWSER_KEY }}
           VITE_SYNC_TELEMETRY_LEVEL: ${{ vars.VITE_SYNC_TELEMETRY_LEVEL || 'errors' }}

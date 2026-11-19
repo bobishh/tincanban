@@ -19,8 +19,8 @@ test("Given an enabled local diagnostic collector, when Identity approves browse
   await page.route("https://telemetry.invalid/v1/logs", async route => {
     const headers = route.request().headers()
     expect(headers.authorization).toBe(`Bearer ${browserKey}`)
-    expect(headers["x-tinsink-project"]).toBe("tincanban")
-    expect(headers["x-tinsink-source"]).toBe("browser")
+    expect(headers["x-test-project"]).toBe("tincanban")
+    expect(headers["x-test-source"]).toBe("browser")
     logs.push(...logRecords(route.request().postDataJSON() as OtlpLogs))
     await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
   })

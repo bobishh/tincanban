@@ -2,6 +2,7 @@ import { defineConfig } from "vite"
 import vue from "@vitejs/plugin-vue"
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
+import { deploymentBrowserClient } from "./scripts/deployment-browser-client.mjs"
 
 // Co-locate the existing eager workspace graph without pulling in lazy dependencies.
 const workspaceCoreModules = new Set([
@@ -86,6 +87,7 @@ export default defineConfig(({ command }) => ({
     __TINCANBAN_BUILD_COMMIT__: JSON.stringify(command === "build" ? buildCommit() : "dev"),
   },
   plugins: [
+    { name: "deployment-browser-client", transformIndexHtml() { return deploymentBrowserClient(process.env) } },
     vue({ template: { compilerOptions: { isCustomElement: (tag) => tag === "berlin-tower" } } }),
     {
       name: "agent-route",
