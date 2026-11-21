@@ -1,5 +1,6 @@
 import type * as ManagementClient from "./rustyManagementClient"
 import type * as ConflictWorkflow from "./replicaCredentialConflictWorkflow"
+import * as fc from "fast-check"
 import { afterEach, expect, it, vi } from "vitest"
 import { nextTick, reactive, ref, shallowRef } from "vue"
 import type * as Vue from "vue"
@@ -733,6 +734,67 @@ it("Given one board is in flight and another board is stalled, when that board c
     await vi.waitFor(() => expect(pass.activeCount()).toBe(3))
     expect(pass.stalledCount()).toBe(1)
   } finally { pass.stalled.resolve(true); for (const gate of pass.activeReads) gate.resolve(true) }
+})
+
+it("Given a stalled personal inventory, when a board edit races with replica replies, then deliver the edited revision before the inventory returns", async () => {
+  await fc.assert(fc.asyncProperty(fc.scheduler(), fc.boolean(), async (scheduler, otherBoardFails) => {
+    const f = await fixture()
+    const other = { ...f.workspace, workspaceId: "workspace-other", scopeId: "scope-other" }
+    await setReplicaPreference(f.personId, f.workspace)
+    await setReplicaPreference(f.personId, other)
+    await setReplicaPreference(f.personId, f.identity)
+
+    const inventory = Promise.withResolvers<boolean>()
+    const otherReply = Promise.withResolvers<boolean>()
+    const firstReply = Promise.withResolvers<boolean>()
+    const started = new Set<string>()
+    const delivered: number[] = []
+    let revision = 0
+    const activeId = f.workspace.workspaceId
+    runtime.identitySync.mockImplementation(async () => {
+      started.add("inventory")
+      return inventory.promise
+    })
+    runtime.workspaceSync.mockImplementation(async config => {
+      started.add(config.workspaceId)
+      if (config.workspaceId === other.workspaceId) return otherReply.promise
+      const captured = revision
+      if (captured === 0) await firstReply.promise
+      delivered.push(captured)
+      return true
+    })
+
+    const controller = f.start()
+    let editDelivery: Promise<void> | undefined
+    try {
+      await vi.waitFor(() => expect(started).toEqual(new Set([activeId, other.workspaceId, "inventory"])))
+      const edit = scheduler.schedule(Promise.resolve(), "edit active board").then(() => {
+        revision++
+        editDelivery = controller.syncWorkspace({ workspaceId: activeId, changed: true })
+      })
+      const active = scheduler.schedule(Promise.resolve(), "finish initial board request").then(() => firstReply.resolve(true))
+      const background = scheduler.schedule(Promise.resolve(), "finish unrelated board request").then(() => {
+        if (otherBoardFails) otherReply.reject(new Error("Unrelated board request failed"))
+        else otherReply.resolve(true)
+      })
+      await scheduler.waitIdle()
+      await Promise.all([edit, active, background])
+      await vi.waitFor(() => {
+        expect(delivered).toEqual([0, 1])
+        expect(controller.statuses.value[replicaKey(f.workspace)]?.phase).toBe("synced")
+      })
+    } finally {
+      firstReply.resolve(true)
+      otherReply.resolve(true)
+      inventory.resolve(true)
+      try {
+        await editDelivery
+        await vi.waitFor(() => expect(controller.busy.value).toBe(false))
+      } finally {
+        for (const cleanup of runtime.cleanup.splice(0)) cleanup()
+      }
+    }
+  }), { numRuns: 24, seed: 52663 })
 })
 
 it("Given other installed boards are idle, when one board's content changes, then Rusty reads that board without polling the others", async () => {
