@@ -147,8 +147,11 @@ test("Given two same-company postings and an ambiguous retained rejection, when 
 
     expect(await reviewRetainedEmail(page, eventId, firstCard)).toMatchObject({ saved: true })
     await reviewRetainedEmail(page, eventId)
-    await expect.poll(async () => await readEvent(fixture.workerOrigin, eventId), { timeout: 45_000 })
-      .toMatchObject({ status: "applied" })
+    await expect(async () => {
+      const event = await readEvent(fixture.workerOrigin, eventId)
+      const result = event.result as { reason?: string } | undefined
+      expect(event.status, result?.reason).toBe("applied")
+    }).toPass({ timeout: 45_000 })
 
     const sourceBeforeReplay = await readApplicationSources(page, [firstCard, secondCard])
     await syncFromRusty(page)
