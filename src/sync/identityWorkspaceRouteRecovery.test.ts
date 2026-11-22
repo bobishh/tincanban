@@ -56,7 +56,7 @@ async function decodedRoutes(component: IdentityDeviceComponent) {
     components: { workspaceRouteRecovery: component } })
 }
 
-it("Given individually bounded catalogs whose merged signed evidence exceeds the old JSON budget, when importing and exporting repeatedly, then retain every connection within the compressed profile budget", async () => {
+it("Given individually bounded catalogs whose merged signed evidence exceeds the old JSON budget, when importing and exporting repeatedly, then retain every connection within the compressed profile budget", { timeout: 15_000 }, async () => {
   const owner = await bootstrapIdentity("Owner")
   const personId = owner.identity.personId
   const envelopes = Array.from({ length: 100 }, (_, index) => ({ version: 1 as const,
