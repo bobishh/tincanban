@@ -15,6 +15,7 @@ import type { WorkspaceChangeAuthorization } from "./workspaceChangeProofStore"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
 import { recentIncomingPackets } from "../stateIncomingPacketCache"
+import * as admissionClient from "./workspaceAdmissionClient"
 
 vi.mock("@automerge/automerge/slim", async () => {
   const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
@@ -92,10 +93,13 @@ describe("durable admitted frontier", () => {
     changed.authority = { ...changed.authority, currentEpoch: changed.authority.currentEpoch + 1 }
     recentIncomingPackets.delete(admitted.id)
     clearMeshTrace()
-    vi.mocked(Automerge.merge).mockClear()
-    await admitted.app.mergeAuthorizedWorkspace(admitted.id, admitted.bytes.slice(), changed).catch(() => undefined)
-    expect(vi.mocked(Automerge.merge)).toHaveBeenCalled()
-    expect(meshTraceSnapshot().some(event => event.event === "workspace.admission.frontier-reused")).toBe(false)
+    const evaluate = vi.spyOn(admissionClient, "runWorkspaceAdmission")
+    try {
+      await admitted.app.mergeAuthorizedWorkspace(admitted.id, admitted.bytes.slice(), changed).catch(() => undefined)
+      expect(evaluate).toHaveBeenCalled()
+      expect(meshTraceSnapshot().some(event => event.event === "workspace.admission.frontier-reused")).toBe(false)
+      expect(meshTraceSnapshot().some(event => event.event === "workspace.admission.profile" && event.reusedChanges === 0)).toBe(true)
+    } finally { evaluate.mockRestore() }
   })
 
   it("Given a local change already admitted into the delta journal, when a peer repeats the same board and authority, then reuse the durable frontier without rewriting it", async () => {
@@ -255,14 +259,16 @@ describe("durable admitted frontier", () => {
     const saved = await readWorkspaceBasisSnapshot(admitted.id)
     const readBaseline = vi.fn()
     const context = liveContext(admitted.id, appLiveStore(admitted.app), { readBaseline })
-    vi.mocked(Automerge.merge).mockClear()
+    const evaluate = vi.spyOn(admissionClient, "runWorkspaceAdmission")
     context.peerHistoryGuard = async () => {
-      if (vi.mocked(Automerge.merge).mock.calls.length) throw new Error("Peer session changed")
+      if (evaluate.mock.calls.length) throw new Error("Peer session changed")
     }
 
-    await expect(persistBackgroundScopeDocument(context, peer.bytes, peer.authorization)).rejects.toThrow("Peer session changed")
-    expect(readBaseline).not.toHaveBeenCalled()
-    expect(await readWorkspaceBasisSnapshot(admitted.id)).toEqual(saved)
+    try {
+      await expect(persistBackgroundScopeDocument(context, peer.bytes, peer.authorization)).rejects.toThrow("Peer session changed")
+      expect(readBaseline).not.toHaveBeenCalled()
+      expect(await readWorkspaceBasisSnapshot(admitted.id)).toEqual(saved)
+    } finally { evaluate.mockRestore() }
   })
 
   it("Given a duplicate frontier, when its explicit received basis still matches the transaction, then skip rebuilding the raw history", async () => {
