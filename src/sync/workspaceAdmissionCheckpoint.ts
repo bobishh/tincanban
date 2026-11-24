@@ -1,7 +1,5 @@
 /* global __TINCANBAN_BUILD_COMMIT__ */
 import { canonicalizeJson, sha256Base64Url } from "../domain/identity"
-import type { WorkspaceAdmissionBase } from "../product-replica"
-import type { StoredCausalEvidence } from "../storageJournal"
 
 /** Local commit metadata. Never accept this marker from a peer or import. */
 export type WorkspaceAdmissionCheckpoint = {
@@ -47,28 +45,4 @@ export async function matchesAdmissionCheckpoint(checkpoint: WorkspaceAdmissionC
   inputHash: string, heads: string[], decisions: unknown): Promise<boolean> {
   return Boolean(checkpoint && checkpoint.policy === admissionPolicy() && checkpoint.inputHash === inputHash &&
     checkpoint.projectionHeads.join() === [...heads].sort().join() && checkpoint.decisionsHash === await jsonHash(decisions))
-}
-
-/** Open the admission saved for exactly this workspace, local revision and authority. */
-export async function retainedAdmissionBase(heads: string[], evidence: StoredCausalEvidence | undefined,
-  credentialFingerprint: string,
-  localBase?: WorkspaceAdmissionBase & { credentialFingerprint: string }): Promise<WorkspaceAdmissionBase | undefined> {
-  if (localBase && localBase.credentialFingerprint === credentialFingerprint) return localBase
-  const checkpoint = evidence?.admissionCheckpoint
-  const retained = checkpoint?.admittedBase
-  const records = evidence?.authorizationEvidence as WorkspaceAdmissionBase["records"] | undefined
-  if (!evidence || !checkpoint || !retained || checkpoint.incremental || !records?.length ||
-    evidence.decisions.some(decision => decision.status.type !== "admitted")) return
-  const evidenceHash = await admissionInputHash(evidence.bytes, { authorityIdentity: retained.authorityIdentity, records })
-  if (evidenceHash === retained.evidenceHash &&
-    await matchesAdmissionCheckpoint(checkpoint, checkpoint.inputHash, heads, evidence.decisions)) {
-    return { document: evidence.bytes, decisions: evidence.decisions, records, authorityIdentity: retained.authorityIdentity }
-  }
-}
-
-export async function bindAdmittedBase(checkpoint: WorkspaceAdmissionCheckpoint, bytes: Uint8Array,
-  records: WorkspaceAdmissionBase["records"], authorityIdentity: string | undefined) {
-  if (!authorityIdentity) return checkpoint
-  const evidenceHash = await admissionInputHash(bytes, { authorityIdentity, records })
-  return { ...checkpoint, admittedBase: { authorityIdentity, evidenceHash } }
 }

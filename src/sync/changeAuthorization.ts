@@ -8,17 +8,16 @@ import { type WorkspaceAuthority, type WorkspaceDeviceRevocation, type Workspace
   type WorkspaceSuccessionClaim } from "./meshRecords"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { mergeAuthorizationRecords, putRecords, records, type WorkspaceChangeAuthorization } from "./workspaceChangeProofStore"
-import { assertLearnedIdentityDeviceActive } from "../domain/identityAuthority"
 import { receivedHistoryBasisIdentity } from "../product-replica/receivedHistoryBasisIdentity"
 import type { IncomingAuthorizationBundle, WorkspaceAdmissionBase, WorkspaceAdmissionResult, WorkspaceWriteAuthorityEvidence } from "../product-replica"
 import { readWorkspaceSnapshot, type StoredCausalEvidence } from "../storageJournal"
 import { defaultStorage } from "../storage"
 import { meshTrace } from "./meshTrace"
-import { admissionInputHash, bindAdmittedBase, createAdmissionCheckpoint, hasOnlyStoredAdmissionProofs, matchesAdmissionCheckpoint, retainedAdmissionBase,
+import { admissionInputHash, hasOnlyStoredAdmissionProofs, matchesAdmissionCheckpoint,
   type WorkspaceAdmissionCheckpoint } from "./workspaceAdmissionCheckpoint"
 
 import type { WorkspaceRole } from "../domain/permissions"
-import { canonicalAuthorityJson, normalizeAuthorityDepartures, normalizeCertificateSets } from "./authorityFingerprint"
+import { authorityValidationFingerprint, canonicalAuthorityJson, normalizeAuthorityDepartures, normalizeCertificateSets } from "./authorityFingerprint"
 import type { WorkspaceSigningContextFactory } from "./workspaceSigning"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 export type { WorkspaceSigningContextFactory } from "./workspaceSigning"
@@ -408,38 +407,9 @@ export async function evaluateIncomingWorkspaceAdmission(local: Automerge.Doc<Wo
   remote: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown, priorEvidenceRecords: Authorization[] = [],
   receivedBasis?: WasmVerifiedReceivedHistoryBaseline, storedEvidence?: StoredCausalEvidence,
   localBase?: WorkspaceAdmissionBase & { credentialFingerprint: string }): Promise<WorkspaceAdmissionResult & { rawBytes: Uint8Array; credentialFingerprint: string; admissionCheckpoint?: WorkspaceAdmissionCheckpoint }> {
-  const [{ rememberWorkspaceAdmission, reusedWorkspaceAdmission }, { credential, frozenCredential, knownAuthority, combinedBundle, context }] =
-    await Promise.all([import("./workspaceAdmissionReuse"),
-      workspaceAdmissionContext(local ?? remote, raw, priorEvidenceRecords, Boolean(local), undefined, receivedBasis)])
-  const learnedIdentityAuthorities = await guardNewChangesAgainstLearnedIdentityRevocations(local, remote, combinedBundle.records as Authorization[])
-  const startedAt = performance.now()
-  meshTrace("workspace.admission.started", { workspaceId: remote.id, epoch: credential?.epoch ?? null })
-  // Heads identify the exact documents. A repeated check can skip building their raw union.
-  const sourceHeads = { remote: Automerge.getHeads(remote).sort(), local: local && local !== remote ? Automerge.getHeads(local).sort() : null }
-  const reuseKey = canonicalizeJson({ sourceHeads, ...context, receivedBasis: receivedHistoryBasisIdentity(receivedBasis), learnedIdentityAuthorities })
-  const reused = reusedWorkspaceAdmission(remote.id, reuseKey)
-  const base = await retainedAdmissionBase(sourceHeads.local ?? sourceHeads.remote, storedEvidence, frozenCredential, localBase)
-  const rawBytes = reused?.rawBytes ?? rawAdmissionSnapshot(local, remote, base, sourceHeads.local)
-  // Causal admission uses signed change-time authority, not receiver wall time.
-  const plan = reused?.result ?? await (await import("./workspaceAdmissionClient")).runWorkspaceAdmission({ workspaceId: remote.id,
-    receivedBasis, remote: rawBytes.slice(), authorization: combinedBundle, knownAuthority, now: Date.now(),
-    admittedBase: base,
-  })
-  if (reused) meshTrace("workspace.admission.reused", { workspaceId: remote.id, elapsedMs: Math.round(performance.now() - startedAt) })
-  else if (plan.profile) meshTrace("workspace.admission.profile", { workspaceId: remote.id, ...plan.profile, baseAvailable: Boolean(base) })
-  const admissionCheckpoint = await incomingAdmissionCheckpoint(rawBytes, context, plan)
-  // Authority may change while either policy computation or hashing yields.
-  const currentCredential = await incomingCredential(remote.id)
-  traceAdmissionAuthority(remote.id, credential, currentCredential, frozenCredential, startedAt, plan)
-  await assertLearnedIdentityAuthoritiesUnchanged(learnedIdentityAuthorities)
-  if (!reused) rememberWorkspaceAdmission(remote.id, reuseKey, plan, rawBytes)
-  return { ...structuredClone(plan), rawBytes, credentialFingerprint: frozenCredential, admissionCheckpoint, authorizationEvidence: structuredClone(plan.verifiedAuthorizations) }
-}
-
-async function incomingAdmissionCheckpoint(bytes: Uint8Array, context: unknown, plan: WorkspaceAdmissionResult) {
-  if (!plan.authorizedHeads || !plan.decisions) return
-  const checkpoint = await createAdmissionCheckpoint(await admissionInputHash(bytes, context), plan.authorizedHeads, plan.decisions)
-  return bindAdmittedBase(checkpoint, bytes, plan.verifiedAuthorizations, plan.authorityIdentity)
+  const [{ evaluateReceivedWorkspace }, context] = await Promise.all([import("./workspaceAdmissionReuse"),
+    workspaceAdmissionContext(local ?? remote, raw, priorEvidenceRecords, Boolean(local), undefined, receivedBasis)])
+  return evaluateReceivedWorkspace(local, remote, context, () => incomingCredential(remote.id), receivedBasis, storedEvidence, localBase)
 }
 
 /**
@@ -495,91 +465,15 @@ async function workspaceAdmissionContext(doc: Automerge.Doc<WorkspaceDocumentV2>
   const knownAuthority = normalizeCertificateSets(hasLocal ? workspaceWriteAuthorityEvidence(doc, credential) ?? null : null)
   const rawRecords = (bundle.version === 1 ? bundle.records : bundle.pages.flat()) as Authorization[]
   const allRecords = mergeAuthorizationRecords([...savedRecords ?? await records(doc.id), ...priorEvidenceRecords], rawRecords)
-  const combinedBundle: IncomingAuthorizationBundle = { version: 1, records: allRecords, authority: bundle.authority }
+  const combinedBundle = { version: 1, records: allRecords, authority: bundle.authority } satisfies IncomingAuthorizationBundle
   const basisId = receivedHistoryBasisIdentity(receivedBasis)?.baselineId ?? null
   return { credential, frozenCredential, knownAuthority, combinedBundle,
     context: { workspaceId: doc.id, authorization: combinedBundle, knownAuthority, credential: frozenCredential, basisId } }
 }
 
-/** A learned Identity revocation applies to newly received commands before reusable admission results. */
-async function guardNewChangesAgainstLearnedIdentityRevocations(local: Automerge.Doc<WorkspaceDocumentV2> | undefined,
-  remote: Automerge.Doc<WorkspaceDocumentV2>, authorizations: Authorization[]) {
-  const knownHashes = new Set(local ? Automerge.getChangesMetaSince(local, []).map(change => change.hash) : [])
-  const incomingHashes = new Set(Automerge.getChangesMetaSince(remote, []).map(change => change.hash)
-    .filter(hash => !knownHashes.has(hash)))
-  const devicesByPerson = new Map<string, Set<string>>()
-  for (const authorization of authorizations) {
-    const { personId, deviceId, hashes } = authorization.signed.payload
-    if (!hashes.some(hash => incomingHashes.has(hash))) continue
-    const devices = devicesByPerson.get(personId) ?? new Set<string>()
-    devices.add(deviceId)
-    devicesByPerson.set(personId, devices)
-  }
-  const learned: Record<string, { digest: string | null; devices: string[] }> = {}
-  for (const [personId, devices] of [...devicesByPerson.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    let digest: string | null = null
-    for (const deviceId of [...devices].sort()) {
-      const current = await assertLearnedIdentityDeviceActive(personId, deviceId)
-      if (digest !== null && current !== digest) throw new Error("Identity authority changed during workspace admission")
-      digest = current
-    }
-    learned[personId] = { digest, devices: [...devices].sort() }
-  }
-  return learned
-}
+export type IncomingWorkspaceAdmissionContext = Awaited<ReturnType<typeof workspaceAdmissionContext>>
 
-async function assertLearnedIdentityAuthoritiesUnchanged(
-  learned: Record<string, { digest: string | null; devices: string[] }>): Promise<void> {
-  for (const [personId, authority] of Object.entries(learned)) {
-    for (const deviceId of authority.devices) {
-      const current = await assertLearnedIdentityDeviceActive(personId, deviceId)
-      if (current !== authority.digest) throw new Error("Identity authority changed during workspace admission")
-    }
-  }
-}
-
-function rawAdmissionSnapshot(local: Automerge.Doc<WorkspaceDocumentV2> | undefined, remote: Automerge.Doc<WorkspaceDocumentV2>,
-  base: WorkspaceAdmissionBase | undefined, heads: string[] | null) {
-  if (!local || local === remote) return Automerge.save(remote)
-  // A fully admitted local document has no hidden or pending changes to merge.
-  if (base && heads && Automerge.hasHeads(remote, heads)) return Automerge.save(remote)
-  const merged = Automerge.merge(Automerge.clone(local), remote)
-  try { return Automerge.save(merged) }
-  finally { Automerge.free(merged) }
-}
-
-function traceAdmissionAuthority(workspaceId: string, credential: StoredWorkspaceAuthority | null,
-  currentCredential: StoredWorkspaceAuthority | null, frozenCredential: string, startedAt: number, plan: WorkspaceAdmissionResult): void {
-  const changedFields = authorityChangedFields(credential, currentCredential)
-  if (authorityValidationFingerprint(currentCredential) !== frozenCredential ||
-    (currentCredential && meshRustRuntime().state.hasAuthorityConflict(currentCredential))) {
-    meshTrace("workspace.admission.authority-changed", { workspaceId,
-      elapsedMs: Math.round(performance.now() - startedAt), changedFields,
-      previousEpoch: credential?.epoch ?? null, currentEpoch: currentCredential?.epoch ?? null }, "warn")
-    throw new Error("Workspace authority changed during validation. Retry synchronization.")
-  }
-  meshTrace(changedFields.length ? "workspace.admission.authority-refreshed" : "workspace.admission.completed", {
-    workspaceId, elapsedMs: Math.round(performance.now() - startedAt), changedFields,
-    admitted: plan.admittedHashes?.length ?? 0, pending: plan.pendingHashes?.length ?? 0,
-    quarantined: plan.quarantinedHashes?.length ?? 0,
-  })
-}
-
-export function authorityValidationFingerprint(authority: StoredWorkspaceAuthority | null): string {
-  if (!authority) return canonicalizeJson(null)
-  // Peer refreshes advance the storage timestamp without changing rights.
-  // Keep every security field in the race guard, including unknown future fields.
-  const rights = { ...authority }
-  delete (rights as Partial<StoredWorkspaceAuthority>).updatedAt
-  return canonicalAuthorityJson(rights)
-}
-
-function authorityChangedFields(before: StoredWorkspaceAuthority | null, after: StoredWorkspaceAuthority | null): string[] {
-  const left = (before ?? {}) as unknown as Record<string, unknown>
-  const right = (after ?? {}) as unknown as Record<string, unknown>
-  return [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()
-    .filter(key => canonicalizeJson(left[key] ?? null) !== canonicalizeJson(right[key] ?? null))
-}
+export { authorityValidationFingerprint } from "./authorityFingerprint"
 
 /** Persists only proofs that a completed admission has already verified. */
 async function persistIncomingChangeAuthorizations(workspaceId: string, verified: unknown[]): Promise<boolean> {

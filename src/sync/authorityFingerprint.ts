@@ -69,6 +69,15 @@ export function canonicalAuthorityJson(value: unknown): string {
   return canonicalJson(normalizeCertificateSets(value))
 }
 
+export function authorityValidationFingerprint(authority: object | null): string {
+  if (!authority) return "null"
+  // Peer refreshes advance the storage timestamp without changing rights.
+  // Keep every security field in the race guard, including unknown future fields.
+  const rights: Record<string, unknown> = { ...authority }
+  delete rights.updatedAt
+  return canonicalAuthorityJson(rights)
+}
+
 /** Absent departures are an empty set. A non-array is rejected rather than treated as none. */
 export function normalizeAuthorityDepartures(authority: WorkspaceWriteAuthorityEvidence): WorkspaceWriteAuthorityEvidence {
   const departures = (authority as { departures?: unknown }).departures

@@ -1,5 +1,6 @@
 import { expect, it } from "vitest"
-import { admissionInputHash, bindAdmittedBase, createAdmissionCheckpoint, matchesAdmissionCheckpoint, retainedAdmissionBase } from "./workspaceAdmissionCheckpoint"
+import { admissionInputHash, createAdmissionCheckpoint, matchesAdmissionCheckpoint } from "./workspaceAdmissionCheckpoint"
+import { bindAdmittedBase, retainedAdmissionBase } from "./workspaceAdmissionReuse"
 import type { WorkspaceChangeAuthorization } from "../product-replica"
 
 it("Given committed admission metadata, When history, rights, proofs, projection, decisions or policy differ, Then the stored result cannot be reused", async () => {
