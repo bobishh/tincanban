@@ -57,13 +57,17 @@ async function applyDocumentChanges(value: DocumentChanges & { document?: unknow
     ;[document] = applyChanges(document, changes)
     const hashes = changes.map(change => decodeChange(change).hash)
     if (!hasHeads(document, [...hashes, ...value.heads])) throw new Error("Document change dependencies are unavailable")
-    // A local union is not proof that the sender retained our unpublished edits.
-    const source = clone(view(document, value.heads))
-    try {
-      if (!hasHeads(source, hashes)) throw new Error(invalidSnapshot)
-      return { version: 1, workspaceId: value.workspaceId, document: encodeBlindBytes(save(source)),
-        authorization: value.authorization, chat: value.chat, ...(value.attachments === undefined ? {} : { attachments: value.attachments }) }
-    } finally { free(source) }
+    // Fork only when the local union also contains edits outside the sender's frontier.
+    // Forking an already exact frontier duplicates the full CRDT operation history.
+    const sameFrontier = canonicalizeJson(getHeads(document).sort()) === canonicalizeJson([...value.heads].sort())
+    if (!sameFrontier) {
+      const source = clone(view(document, value.heads))
+      free(document)
+      document = source
+    }
+    if (!hasHeads(document, hashes)) throw new Error(invalidSnapshot)
+    return { version: 1, workspaceId: value.workspaceId, document: encodeBlindBytes(save(document)),
+      authorization: value.authorization, chat: value.chat, ...(value.attachments === undefined ? {} : { attachments: value.attachments }) }
   } finally { free(document) }
 }
 

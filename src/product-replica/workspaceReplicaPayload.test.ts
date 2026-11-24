@@ -4,6 +4,8 @@ import * as Automerge from "@automerge/automerge/slim"
 import { decodeBlindBytes, encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { encodeWorkspaceDocumentChanges, readWorkspaceReplicaSnapshot, type WorkspaceReplicaSnapshot } from "./workspaceReplicaPayload"
 
+vi.mock("@automerge/automerge/slim", { spy: true })
+
 beforeAll(async () => { await Automerge.initializeWasm(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")) })
 const encoded = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
 
@@ -17,6 +19,21 @@ function fixture() {
     authorization: { version: 1, records: ["initial proof", "edit proof"], authority: { epoch: 1 } } }
   return { before, after, snapshot, updated, close: () => Automerge.free(after) }
 }
+
+test("Given a delta completing the local frontier, when received, then restore the sender state without copying its full history", async () => {
+  const f = fixture()
+  const clone = vi.spyOn(Automerge, "clone")
+  try {
+    const delta = encodeWorkspaceDocumentChanges(f.snapshot, f.updated)!
+    const snapshot = await readWorkspaceReplicaSnapshot(delta, "board", async () => decodeBlindBytes(f.snapshot.document))
+    const restored = Automerge.load<{ title: string }>(decodeBlindBytes(snapshot.document))
+    try {
+      expect(restored.title).toBe("Updated")
+      expect(Automerge.getHeads(restored)).toEqual(Automerge.getHeads(f.after))
+      expect(clone).not.toHaveBeenCalled()
+    } finally { Automerge.free(restored) }
+  } finally { clone.mockRestore(); f.close() }
+})
 
 test("Given a document delta and a concurrent local edit, when replayed twice, then preserve both edits without duplicating changes", async () => {
   const f = fixture()
