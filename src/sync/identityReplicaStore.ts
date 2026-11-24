@@ -1,4 +1,4 @@
-import { canonicalizeJson, sha256Base64Url, type LocalProfile } from "../domain/identity"
+import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import { defaultStorage } from "../storage"
 import { defaultProofStore } from "../domain/proofs"
@@ -19,8 +19,7 @@ import { withPrivateReplicaOperation } from "./privateReplicaOperation"
 import { createRustyIdentityProfileScopeFetcher } from "./rustyIdentityTransport"
 import { inventoryBlindObjects, downloadBlindObject, uploadBlindObject, type BlindAccess } from "./blindClient"
 import { readIdentityDeviceTransfer } from "./identityDeviceTransfer"
-import { captureIdentityWorkspaceRouteRecovery } from "./identityWorkspaceRouteRecovery"
-import { peerStore } from "./peerStore"
+import { readIdentityWorkspaceRouteRevision } from "./identityWorkspaceRouteRecovery"
 import { prepareBlindCheckpoint, submitBlindCheckpoint, type BlindCheckpointRequest } from "./blindCheckpoint"
 
 /** Production ports keep private person state outside workspace/Worker replication adapters. */
@@ -37,10 +36,10 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
     ensureCurrent()
     const [revision, root] = await Promise.all([readIdentityStateRevision(), defaultStorage.loadPersonalRoot()])
     if (root?.identity.personId !== personId) throw new Error("Private identity catalog is unavailable")
-    const routes = await captureIdentityWorkspaceRouteRecovery(peerStore, Object.values(root.workspaces)
+    const routeRevision = await readIdentityWorkspaceRouteRevision(Object.values(root.workspaces)
       .filter(reference => !reference.forgotten).map(reference => reference.workspaceId), profile)
     ensureCurrent()
-    return `${revision}:${await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(routes)))}`
+    return `${revision}:${routeRevision}`
   }
   const scopeFetch = createRustyIdentityProfileScopeFetcher({ access: config, profile, ensureCurrent })
   const transport = {

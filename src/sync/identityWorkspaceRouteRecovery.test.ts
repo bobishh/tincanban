@@ -94,6 +94,68 @@ it("Given individually bounded catalogs whose merged signed evidence exceeds the
   expect((await readIdentityWorkspaceRouteRecovery(personId)).envelopes).toEqual(expected)
 })
 
+it("Given the same signed contacts, when the catalog is rebuilt, then reuse verification and validate only a changed contact", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const personId = owner.identity.personId
+  const workspaceId = "reuse-signed-contacts"
+  const ownerCertificates = [owner.certificate]
+  const createRoute = (instanceId: string, routeSequence = 1) => createPeerAdvertisement(owner, workspaceId, instanceId,
+    { certificates: ownerCertificates, ownerPublicKey: owner.identity.publicKey, ownerCertificates, instanceId, routeSequence })
+  const first = await createRoute("first")
+  const second = await createRoute("second")
+  const raw = { personId, envelopes: [{ version: 1 as const, workspaceId, ownerPersonId: personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates, transportSecret: "local-connection",
+    epoch: 1, peers: [first, second], revocations: [] }] }
+  const verify = vi.spyOn(meshRustRuntime().state, "verifyWorkspaceMemberBundle")
+  try {
+    const initial = await identityWorkspaceRouteRecoveryComponent(raw)
+    expect(verify).toHaveBeenCalledTimes(2)
+    expect(await identityWorkspaceRouteRecoveryComponent(structuredClone(raw))).toEqual(initial)
+    expect(verify).toHaveBeenCalledTimes(2)
+    raw.envelopes[0]!.peers[1] = await createRoute("second", 2)
+    expect(await identityWorkspaceRouteRecoveryComponent(raw)).not.toEqual(initial)
+    expect(verify).toHaveBeenCalledTimes(3)
+    raw.envelopes[0]!.ownerCertificates = []
+    await identityWorkspaceRouteRecoveryComponent(raw)
+    expect(verify).toHaveBeenCalledTimes(5)
+  } finally { verify.mockRestore() }
+})
+
+it("Given an unchanged route catalog, when leases expire or the clock moves backward, then refresh contact selection safely", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const personId = owner.identity.personId
+  const workspaceId = "route-cache-clock"
+  const now = Date.now()
+  const expiresAt = now + 30_000
+  const ownerCertificates = [owner.certificate]
+  const peers = await Promise.all(["1", "2", "3"].map(instanceId => createPeerAdvertisement(owner, workspaceId, instanceId, {
+    certificates: ownerCertificates, ownerPublicKey: owner.identity.publicKey, ownerCertificates, instanceId,
+    issuedAt: new Date(now).toISOString(), expiresAt: new Date(expiresAt).toISOString(),
+  })))
+  const input = { personId, envelopes: [{ version: 1 as const, workspaceId, ownerPersonId: personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates, epoch: 1, peers, revocations: [],
+    transportSecret: "test-clock" }] }
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now)
+  const verify = vi.spyOn(meshRustRuntime().state, "verifyWorkspaceMemberBundle")
+  const readPeers = async () => (await decodedRoutes(await identityWorkspaceRouteRecoveryComponent(input))).envelopes[0]!.peers
+  try {
+    expect(await readPeers()).toHaveLength(3)
+    expect(verify).toHaveBeenCalledTimes(3)
+    clock.mockReturnValue(expiresAt)
+    expect(await readPeers()).toHaveLength(2)
+    expect(verify).toHaveBeenCalledTimes(3)
+    clock.mockReturnValue(now - 6 * 60_000)
+    expect(await readPeers()).toHaveLength(0)
+    expect(verify).toHaveBeenCalledTimes(6)
+    clock.mockReturnValue(now)
+    expect(await readPeers()).toHaveLength(3)
+    expect(verify).toHaveBeenCalledTimes(9)
+  } finally {
+    clock.mockRestore()
+    verify.mockRestore()
+  }
+})
+
 it("Given many expired browser instances for one device, when exporting recovery contacts, then keep recent fallback contacts without growing the identity catalog forever", async () => {
   const owner = await bootstrapIdentity("Owner")
   const workspaceId = "bounded-recovery-contacts"

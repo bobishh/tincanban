@@ -100,6 +100,8 @@ function useAppLifecycle(core: ReturnType<typeof useAppCore>, board: ReturnType<
       loadRuntime: async diagnosticContext => {
         const { initializePolicyBrowserRuntime } = await import("../iroh")
         await diagnoseStartupStep("policy-wasm", initializePolicyBrowserRuntime, {}, diagnosticContext)
+        if (navigator.onLine) void import("../sync/identityWorkspaceRouteWorkerClient")
+          .then(({ warmIdentityWorkspaceRoutes }) => warmIdentityWorkspaceRoutes()).catch(() => {})
         if (navigator.onLine) await diagnoseStartupStep("admission-worker-init", prepareAdmission, {}, diagnosticContext).catch(() => {})
         else void prepareAdmission().catch(() => {})
       },

@@ -1,31 +1,15 @@
-import { z } from "zod"
 import { canonicalizeJson, type LocalProfile } from "../domain/identity"
-import { readLocal, type LocalStatePlan } from "../localDb"
-import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
-import { adaptVerifiedWorkspaceAdvertisement } from "@meta-uber/mesh-replication/protocol"
+import type { LocalStatePlan } from "../localDb"
 import type { WorkspaceGrant } from "../domain/model"
-import { isEnvelope, type MeshWorkspaceEnvelope } from "./durableMeshBase"
-import { validateOptionalIdentityComponent, type IdentityDeviceComponent } from "./identityDeviceStateCodec"
-import { mergePeerRecords, type PeerStore, type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
+import type { MeshWorkspaceEnvelope } from "./durableMeshBase"
+import type { IdentityDeviceComponent } from "./identityDeviceStateCodec"
+import type { PeerStore, WorkspaceMeshCredential } from "./peerStore"
 import type { DurableMesh } from "./durableMesh"
-import { departures, deviceRevocations, ownerAuthorities, ownershipTransfers, revocations,
-  successionClaims, successionPolicy, successionVotes } from "./durableMeshBase"
-import { verifyWorkspaceMemberBundle, type WorkspaceMemberBundle } from "./meshRecords"
-// A first dynamic import while offline can poison later catalog transfers in the browser's module cache.
-import { packWorkspaceRoutes, unpackWorkspaceRoutes } from "./identityWorkspaceRoutePacking"
+import { runIdentityWorkspaceRoutes } from "./identityWorkspaceRouteWorkerClient"
+import type { WorkspaceRouteRecovery, WorkspaceRouteManifest } from "./identityWorkspaceRouteWorkerContract"
 
-const componentName = "workspaceRouteRecovery"
-const schema = "workspace-route-recovery@1"
-const packedSchema = "workspace-route-recovery@2"
-const key = (personId: string) => `tincanban.identity-workspace-routes.v1.${personId}`
-const valueSchema = z.object({ personId: z.string().min(1).max(128),
-  envelopes: z.array(z.unknown()).max(512) }).strict()
-const storedSchema = valueSchema.extend({ version: z.literal(1) }).strict()
-// Repeated signed ledgers compress well; bound both their decoded working set
-// and the encoded component that shares the 1 MiB profile manifest.
-const maxCatalogBytes = 8 * 1024 * 1024
-const maxPackedCatalogBytes = 900 * 1024
-const maxEnvelopeCount = 512
+export { isIdentityWorkspaceRouteRecoveryComponent } from "./identityWorkspaceRouteWorkerContract"
+export type { WorkspaceRouteRecovery } from "./identityWorkspaceRouteWorkerContract"
 
 export class WorkspaceConnectionConflict extends Error {
   constructor(readonly workspaceId: string) {
@@ -34,226 +18,41 @@ export class WorkspaceConnectionConflict extends Error {
   }
 }
 
-export type WorkspaceRouteRecovery = { personId: string; envelopes: MeshWorkspaceEnvelope[] }
-type Manifest = { personId: string; components: Record<string, IdentityDeviceComponent> }
-
-async function peerRecord(envelope: MeshWorkspaceEnvelope, bundle: WorkspaceMemberBundle,
-  verified: Awaited<ReturnType<typeof verifyWorkspaceMemberBundle>>): Promise<WorkspacePeerRecord> {
-  const route = await adaptVerifiedWorkspaceAdvertisement(verified.advertisement)
-  return { workspaceId: route.scopeId, personId: route.personId, deviceId: route.deviceId,
-    ...(route.instanceId ? { instanceId: route.instanceId } : {}), endpoint: route.endpoint,
-    transportSecret: envelope.transportSecret, role: verified.role, lastSeen: route.issuedAt,
-    revokedAt: null, advertisement: bundle }
+function routeIdentity(profile: LocalProfile) {
+  return { personId: profile.identity.personId, publicKey: profile.identity.publicKey, deviceId: profile.device.deviceId }
 }
 
-function mergedPeerBundles(records: WorkspacePeerRecord[]): WorkspaceMemberBundle[] {
-  return records.flatMap(record => meshRustRuntime().state.recoveryPeerAdvertisements(record, Date.now()) as WorkspaceMemberBundle[])
+export function identityWorkspaceRouteRecoveryComponent(value: WorkspaceRouteRecovery): Promise<IdentityDeviceComponent> {
+  return runIdentityWorkspaceRoutes({ kind: "pack", value })
 }
 
-async function compactEnvelopePeers(envelope: MeshWorkspaceEnvelope): Promise<MeshWorkspaceEnvelope> {
-  const records = new Map<string, WorkspacePeerRecord>()
-  for (const raw of envelope.peers) {
-    try {
-      const verified = await verifyWorkspaceMemberBundle(raw, { workspaceId: envelope.workspaceId,
-        ownerPersonId: envelope.ownerPersonId, ownerPublicKey: envelope.ownerPublicKey,
-        ownerCertificates: envelope.ownerCertificates as never, ownerHistory: envelope.ownerHistory as never,
-        allowStaleRoute: true, now: Date.now() })
-      const incoming = await peerRecord(envelope, raw, verified)
-      const existing = records.get(incoming.deviceId)
-      records.set(incoming.deviceId, existing ? mergePeerRecords(existing, incoming) : incoming)
-    } catch {
-      // Preserve only SDK-verified routes; stale leases remain useful bootstrap contacts.
-    }
-  }
-  const peers = [...records.values()].flatMap(record => mergedPeerBundles([record]))
-  return { ...envelope, peers }
+export function readIdentityWorkspaceRouteRecovery(personId: string): Promise<WorkspaceRouteRecovery> {
+  return runIdentityWorkspaceRoutes({ kind: "read", personId })
 }
 
-function envelopeAuthorityKey(envelope: MeshWorkspaceEnvelope): string {
-  const authority = Object.fromEntries(Object.entries(envelope).filter(([name]) => name !== "peers"))
-  return canonicalizeJson(authority)
-}
-
-function scopeAuthorityGroupKey(envelope: MeshWorkspaceEnvelope): string {
-  return canonicalizeJson([envelope.workspaceId, envelope.ownerPersonId, envelope.ownerPublicKey, envelope.transportSecret])
-}
-
-function mergeScopeSnapshots(current: unknown, incoming: unknown): MeshWorkspaceEnvelope["scopeAuthoritySnapshot"] {
-  if (current === undefined) return incoming as MeshWorkspaceEnvelope["scopeAuthoritySnapshot"]
-  if (incoming === undefined) return current as MeshWorkspaceEnvelope["scopeAuthoritySnapshot"]
-  return meshRustRuntime().state.mergeScopeAuthoritySnapshots(current, incoming, Date.now()) as MeshWorkspaceEnvelope["scopeAuthoritySnapshot"]
-}
-
-type ScopeAuthorityVariant = { snapshot: MeshWorkspaceEnvelope["scopeAuthoritySnapshot"]; envelopes: MeshWorkspaceEnvelope[] }
-
-async function mergeCompatibleScopeSnapshots(envelopes: MeshWorkspaceEnvelope[]): Promise<MeshWorkspaceEnvelope[]> {
-  const byWorkspaceOwner = new Map<string, ScopeAuthorityVariant[]>()
-  for (const envelope of envelopes) {
-    const key = scopeAuthorityGroupKey(envelope)
-    const variants = byWorkspaceOwner.get(key) ?? []
-    let merged = false
-    for (const variant of variants) {
-      try {
-        variant.snapshot = mergeScopeSnapshots(variant.snapshot, envelope.scopeAuthoritySnapshot)
-        variant.envelopes.push(envelope)
-        merged = true
-        break
-      } catch {
-        // SDK-rejected authority variants remain separate and pending.
-      }
-    }
-    if (!merged) variants.push({ snapshot: envelope.scopeAuthoritySnapshot, envelopes: [envelope] })
-    byWorkspaceOwner.set(key, variants)
-  }
-  return [...byWorkspaceOwner.values()].flatMap(variants => variants.flatMap(variant => variant.envelopes.map(envelope => {
-    const metadata = Object.fromEntries(Object.entries(envelope).filter(([name]) => name !== "scopeAuthoritySnapshot")) as
-      Omit<MeshWorkspaceEnvelope, "scopeAuthoritySnapshot">
-    return variant.snapshot === undefined ? metadata : { ...metadata, scopeAuthoritySnapshot: variant.snapshot }
-  })))
-}
-
-async function compactExactEnvelopeVariants(envelopes: MeshWorkspaceEnvelope[]): Promise<MeshWorkspaceEnvelope[]> {
-  const exact = new Map<string, MeshWorkspaceEnvelope>()
-  for (const envelope of envelopes) {
-    const key = envelopeAuthorityKey(envelope)
-    const previous = exact.get(key)
-    exact.set(key, previous
-      ? await compactEnvelopePeers({ ...previous, peers: [...previous.peers, ...envelope.peers] })
-      : envelope)
-  }
-  return [...exact.values()]
-}
-
-async function normalize(personId: string, raw: unknown): Promise<WorkspaceRouteRecovery> {
-  const parsed = valueSchema.safeParse(raw)
-  if (!parsed.success || parsed.data.personId !== personId) throw new Error("Invalid workspace route recovery state")
-  const checkedEnvelopes: MeshWorkspaceEnvelope[] = []
-  for (const value of parsed.data.envelopes) {
-    const envelope = JSON.parse(JSON.stringify(value)) as unknown
-    if (!isEnvelope(envelope)) throw new Error("Invalid workspace route recovery envelope")
-    checkedEnvelopes.push(await compactEnvelopePeers(envelope as MeshWorkspaceEnvelope))
-  }
-  const scopeMergedEnvelopes = await mergeCompatibleScopeSnapshots(checkedEnvelopes)
-  const envelopes = (await compactExactEnvelopeVariants(scopeMergedEnvelopes)).sort((left, right) => left.workspaceId.localeCompare(right.workspaceId) ||
-    envelopeAuthorityKey(left).localeCompare(envelopeAuthorityKey(right)))
-  if (envelopes.length > maxEnvelopeCount) throw new Error("Workspace route recovery has too many authority variants")
-  const result = { personId, envelopes }
-  if (new TextEncoder().encode(JSON.stringify({ version: 1, ...result })).byteLength > maxCatalogBytes) {
-    throw new Error("Workspace route recovery exceeds size limit")
-  }
-  return result
-}
-
-async function readComponent(manifest: Manifest): Promise<WorkspaceRouteRecovery> {
-  const found: unknown[] = []
-  const accept = async (name: string, component: IdentityDeviceComponent) => {
-    if (!isIdentityWorkspaceRouteRecoveryComponent(name, component)) return
-    const value = component.schema === packedSchema
-      ? unpackWorkspaceRoutes(manifest.personId, component.value, maxCatalogBytes, maxPackedCatalogBytes)
-      : component.value
-    const checked = validateOptionalIdentityComponent(componentName, { schema, required: false, value: value as Record<string, unknown> })
-    if (checked.value.personId !== manifest.personId) throw new Error("Workspace route recovery identity mismatch")
-    found.push(...valueSchema.shape.envelopes.parse(checked.value.envelopes))
-  }
-  for (const [name, component] of Object.entries(manifest.components)) {
-    if (name === "preservedExtensions" && component.schema === "preserved-identity-components@1") {
-      const extensions = component.value.extensions as Array<{ name: string; component: IdentityDeviceComponent }>
-      for (const entry of extensions) await accept(entry.name, entry.component)
-    } else await accept(name, component)
-  }
-  return normalize(manifest.personId, { personId: manifest.personId, envelopes: found })
-}
-
-export function isIdentityWorkspaceRouteRecoveryComponent(name: string, component: IdentityDeviceComponent): boolean {
-  return name === componentName && [schema, packedSchema].includes(component.schema) && !component.required
-}
-
-export async function identityWorkspaceRouteRecoveryComponent(value: WorkspaceRouteRecovery): Promise<IdentityDeviceComponent> {
-  const checked = await normalize(value.personId, value)
-  validateOptionalIdentityComponent(componentName, { schema, required: false, value: checked })
-  const packed = packWorkspaceRoutes(checked, maxCatalogBytes, maxPackedCatalogBytes)
-  return { schema: packedSchema, required: false, value: packed }
-}
-
-async function decode(personId: string, raw: string | null): Promise<WorkspaceRouteRecovery> {
-  if (raw === null) return { personId, envelopes: [] }
-  if (new TextEncoder().encode(raw).byteLength > maxCatalogBytes) throw new Error("Workspace route recovery exceeds size limit")
-  let input: unknown
-  try { input = JSON.parse(raw) } catch { throw new Error("Invalid workspace route recovery state") }
-  const parsed = storedSchema.safeParse(input)
-  if (!parsed.success || parsed.data.personId !== personId) throw new Error("Invalid workspace route recovery state")
-  return normalize(personId, { personId, envelopes: parsed.data.envelopes })
-}
-
-export async function readIdentityWorkspaceRouteRecovery(personId: string): Promise<WorkspaceRouteRecovery> {
-  return decode(personId, await readLocal(key(personId)))
-}
-
-/** Capture only credentials the current local device can actively use; the SDK owns membership semantics. */
-export async function captureWorkspaceRouteEnvelopes(store: PeerStore, workspaceIds: string[], profile: LocalProfile,
+export function captureWorkspaceRouteEnvelopes(store: PeerStore, workspaceIds: string[], profile: LocalProfile,
   options: { skipUnavailable?: boolean } = {}): Promise<MeshWorkspaceEnvelope[]> {
-  const ids = [...new Set(workspaceIds)]
-  if (ids.length !== workspaceIds.length || ids.some(id => !id)) throw new Error("Invalid workspace route capture request")
-  const envelopes: MeshWorkspaceEnvelope[] = []
-  for (const workspaceId of ids) {
-    const credential = await store.getWorkspaceCredential(workspaceId)
-    if (!credential) {
-      if (options.skipUnavailable) continue
-      throw new Error("Missing workspace mesh credential")
-    }
-    const partition = meshRustRuntime().state.partitionCredentials({ credentials: [credential],
-      personId: profile.identity.personId, publicKey: profile.identity.publicKey, deviceId: profile.device.deviceId })
-    if (partition.activeIndices.length !== 1) {
-      if (options.skipUnavailable) continue
-      throw new Error("Workspace mesh credential is not active for this Identity device")
-    }
-    const peerStoreWithFallback = store as PeerStore & { listPeers?: PeerStore["listPeers"] }
-    const peerInstances = peerStoreWithFallback.listPeerInstances
-      ? await peerStoreWithFallback.listPeerInstances(workspaceId)
-      : await peerStoreWithFallback.listPeers?.(workspaceId) ?? []
-    const peers = peerInstances.filter(peer => !peer.revokedAt && peer.advertisement)
-      .map(peer => peer.advertisement as MeshWorkspaceEnvelope["peers"][number])
-    const authority = await store.getWorkspaceAuthority(workspaceId)
-    envelopes.push({ version: 1, workspaceId: credential.workspaceId, ownerPersonId: credential.ownerPersonId,
-      ownerPublicKey: credential.ownerPublicKey, ownerCertificates: credential.ownerCertificates,
-      transportSecret: credential.transportSecret, epoch: credential.epoch, peers,
-      revocations: revocations(credential), deviceRevocations: deviceRevocations(credential), departures: departures(credential),
-      ownerHistory: ownerAuthorities(credential).slice(1), ownershipTransfers: ownershipTransfers(credential),
-      successionPolicy: successionPolicy(credential), successionVotes: successionVotes(credential), successionClaims: successionClaims(credential),
-      scopeAuthoritySnapshot: authority?.scopeAuthoritySnapshot })
-  }
-  return (await normalize(profile.identity.personId, { personId: profile.identity.personId, envelopes })).envelopes
+  return runIdentityWorkspaceRoutes({ kind: "envelopes", workspaceIds, profile: routeIdentity(profile), options }, store)
 }
 
-export async function captureIdentityWorkspaceRouteRecovery(store: PeerStore, workspaceIds: string[], profile: LocalProfile): Promise<WorkspaceRouteRecovery> {
-  const allowed = new Set(workspaceIds)
-  const [saved, current] = await Promise.all([readIdentityWorkspaceRouteRecovery(profile.identity.personId),
-    captureWorkspaceRouteEnvelopes(store, workspaceIds, profile, { skipUnavailable: true })])
-  return normalize(profile.identity.personId, { personId: profile.identity.personId,
-    envelopes: [...saved.envelopes.filter(envelope => allowed.has(envelope.workspaceId)), ...current] })
+export function captureIdentityWorkspaceRouteRecovery(store: PeerStore, workspaceIds: string[], profile: LocalProfile): Promise<WorkspaceRouteRecovery> {
+  return runIdentityWorkspaceRoutes({ kind: "capture", workspaceIds, profile: routeIdentity(profile) }, store)
 }
 
-export function readIdentityWorkspaceRouteRecoveryComponent(manifest: Manifest): Promise<WorkspaceRouteRecovery> {
-  return readComponent(manifest)
+export function readIdentityWorkspaceRouteRevision(workspaceIds: string[], profile: LocalProfile): Promise<string> {
+  return runIdentityWorkspaceRoutes({ kind: "revision", workspaceIds, profile: routeIdentity(profile) })
 }
 
-/** Pending envelopes remain data until DurableMesh revalidates them against active workspace authority. */
-export async function planIdentityWorkspaceRouteRecoveryImport(manifest: Manifest): Promise<LocalStatePlan> {
-  const incoming = await readIdentityWorkspaceRouteRecoveryComponent(structuredClone(manifest))
-  const raw = await readLocal(key(manifest.personId))
-  const previous = await decode(manifest.personId, raw)
-  const next = await normalize(manifest.personId, { personId: manifest.personId, envelopes: [...previous.envelopes, ...incoming.envelopes] })
-  const value = JSON.stringify({ version: 1, ...next })
-  return { conditions: [{ key: key(manifest.personId), value: raw }],
-    writes: next.envelopes.length || raw !== null ? [{ key: key(manifest.personId), value }] : [] }
+export function readIdentityWorkspaceRouteRecoveryComponent(manifest: WorkspaceRouteManifest): Promise<WorkspaceRouteRecovery> {
+  return runIdentityWorkspaceRoutes({ kind: "component", manifest })
 }
 
-export async function exportIdentityWorkspaceRouteRecovery(personId: string, workspaceIds?: string[]): Promise<Record<string, IdentityDeviceComponent>> {
-  const saved = await readIdentityWorkspaceRouteRecovery(personId)
-  const allowed = workspaceIds ? new Set(workspaceIds) : undefined
-  const filtered = allowed ? await normalize(personId, { personId,
-    envelopes: saved.envelopes.filter(envelope => allowed.has(envelope.workspaceId)) }) : saved
-  return filtered.envelopes.length ? { [componentName]: await identityWorkspaceRouteRecoveryComponent(filtered) } : {}
+export function planIdentityWorkspaceRouteRecoveryImport(manifest: WorkspaceRouteManifest): Promise<LocalStatePlan> {
+  return runIdentityWorkspaceRoutes({ kind: "import", manifest })
+}
+
+export function exportIdentityWorkspaceRouteRecovery(personId: string, workspaceIds?: string[]): Promise<Record<string, IdentityDeviceComponent>> {
+  return runIdentityWorkspaceRoutes({ kind: "export", personId, workspaceIds })
 }
 
 /** Admit one pending envelope through DurableMesh; pending state remains portable for retry and later devices. */
@@ -341,8 +140,8 @@ export async function restoreIdentityWorkspaceRoutes(input: WorkspaceRouteRestor
   if (new Set(input.workspaceIds).size !== input.workspaceIds.length || input.workspaceIds.some(id => !id)) {
     throw new Error("Invalid workspace route restore request")
   }
-  const pending = await normalize(input.profile.identity.personId, { personId: input.profile.identity.personId,
-    envelopes: input.envelopes })
+  const pending = await runIdentityWorkspaceRoutes({ kind: "normalize",
+    value: { personId: input.profile.identity.personId, envelopes: input.envelopes } })
   for (const workspaceId of input.workspaceIds) {
     await restoreWorkspaceRoutes(input, workspaceId, pending.envelopes.filter(envelope => envelope.workspaceId === workspaceId))
   }
