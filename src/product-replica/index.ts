@@ -1,5 +1,5 @@
 export { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission,
-  type IncomingAuthorizationBundle, type WorkspaceAdmissionInput,
+  type IncomingAuthorizationBundle, type WorkspaceAdmissionBase, type WorkspaceAdmissionInput,
   type WorkspaceAdmissionResult, type WorkspaceWriteAuthorityEvidence } from "./workspaceAdmission"
 export type { WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
 export { admitHistoricalAutomationAuthority } from "./historicalAutomationAuthority"

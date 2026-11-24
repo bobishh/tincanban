@@ -11,7 +11,7 @@ import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, type Inco
   parseWireHistoryBaseline, type AttachmentLocator, type HistoryBaselineFetchPort, type WireHistoryBaseline,
   type WorkspaceChangeAuthorization } from "../../../src/product-replica";
 import { mergeAuthorizationRecords } from "../../../src/product-replica/workspaceAuthorizationRecords";
-import { extendAutomationAdmission } from "../../../src/product-replica/workspaceAdmission";
+import { admissionAuthorityIdentity, extendAutomationAdmission } from "../../../src/product-replica/workspaceAdmission";
 import { executeOwnedCommand } from "../../../src/domain/commands";
 import { canonicalizeJson, publicKeyId, sha256Base64Url, type SignedEnvelope } from "../../../src/domain/identityCrypto";
 import type { LocalProfile } from "../../../src/domain/identity";
@@ -1404,10 +1404,16 @@ export class AutomationReplica {
     const merged = switching ? incoming : mergeDocuments(local, incoming, actorIdForProfile(this.profile));
     const bundle = switching ? snapshot.authorization : normalizeBundle(snapshot.authorization, this.authorizations);
     const authority = nextBasis ? mergeAuthority(bundle.authority, this.authority) : prepareAuthority(bundle.authority, this.authority, merged, this.workspaceId);
+    const retained = this.admissionCache;
+    const admittedBase = !managementGuard && !switching && retained?.rawDocument === this.rawDocument &&
+      retained.authorizations === this.authorizations && retained.authority === this.authority &&
+      retained.result.pendingHashes.length === 0 && retained.result.quarantinedHashes.length === 0
+      ? { document: local, decisions: retained.result.decisions, records: this.authorizations,
+        authorityIdentity: admissionAuthorityIdentity(this.authority) } : undefined;
     let admission: WorkspaceAdmissionResult;
     try {
       admission = computeWorkspaceAdmission({ workspaceId: this.workspaceId, remote: merged,
-        authorization: { ...bundle, authority }, knownAuthority: this.authority, receivedBasis: nextBasis, now: Date.now() }, WasmStateCore as never);
+        authorization: { ...bundle, authority }, knownAuthority: this.authority, receivedBasis: nextBasis, admittedBase, now: Date.now() }, WasmStateCore as never);
       if (switching) assertFullyAdmitted(admission, merged);
     } catch (error) { if (switching) nextBasis?.free(); throw error; }
     let nextHistoryUsage = this.historyUsage;
@@ -1433,7 +1439,8 @@ export class AutomationReplica {
     } catch (error) { if (switching) nextBasis?.free(); throw error; }
     finally { Automerge.free(mergedDocument); }
     const previous = { authority: this.authority, authorizations: this.authorizations, rawDocument: this.rawDocument,
-      chat: this.chat, attachments: this.attachments, history: this.history, basis: this.historyBasis, historyUsage: this.historyUsage };
+      chat: this.chat, attachments: this.attachments, history: this.history, basis: this.historyBasis, historyUsage: this.historyUsage,
+      admission: this.admissionCache };
     const nextAuthorizations = switching ? admission.verifiedAuthorizations
       : mergeAuthorizationRecords(this.authorizations, admission.verifiedAuthorizations);
     // The retained inputs must match what admission evaluated, including the
@@ -1441,21 +1448,22 @@ export class AutomationReplica {
     const reusableAdmission = !switching && bundle.version === 1 &&
       canonicalizeJson(normalizeWireAuthorizations(nextAuthorizations)) ===
         canonicalizeJson(normalizeWireAuthorizations(bundle.records as WorkspaceChangeAuthorization[])) &&
-      canonicalizeJson(authority) === canonicalizeJson(previous.authority);
+      admissionAuthorityIdentity(authority) === admissionAuthorityIdentity(previous.authority);
     this.history = nextHistory; this.historyBasis = nextBasis;
     this.historyUsage = nextHistoryUsage;
     this.replaceEvidence(encodeBlindBytes(merged), nextAuthorizations, authority, nextChat, nextAttachments);
+    if (reusableAdmission) this.admissionCache = { rawDocument: this.rawDocument, authorizations: this.authorizations,
+      authority: this.authority, result: admission };
     try { await this.persistState(); }
     catch (error) {
       this.history = previous.history; this.historyBasis = previous.basis;
       this.historyUsage = previous.historyUsage;
       this.replaceEvidence(previous.rawDocument, previous.authorizations, previous.authority, previous.chat, previous.attachments);
+      this.admissionCache = previous.admission;
       if (switching) nextBasis?.free();
       throw error;
     }
     if (switching) previous.basis?.free();
-    if (reusableAdmission) this.admissionCache = { rawDocument: this.rawDocument, authorizations: this.authorizations,
-      authority: this.authority, result: admission };
     return { hash: await blindHash(new TextEncoder().encode(canonicalizeJson(snapshot))) };
   }
 

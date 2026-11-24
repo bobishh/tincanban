@@ -33,11 +33,20 @@ export type WorkspaceAdmissionInput = {
   remote: Uint8Array
   authorization: IncomingAuthorizationBundle
   knownAuthority: WorkspaceWriteAuthorityEvidence | null
+  admittedBase?: WorkspaceAdmissionBase
   now: number
+}
+
+export type WorkspaceAdmissionBase = {
+  document: Uint8Array
+  decisions: WorkspaceAdmissionResult["decisions"]
+  records: WorkspaceChangeAuthorization[]
+  authorityIdentity: string
 }
 
 export type WorkspaceAdmissionResult = {
   profile?: WorkspaceAdmissionProfile
+  authorityIdentity?: string
   neededHashes: string[]
   admittedHashes: string[]
   verifiedAuthorizations: WorkspaceChangeAuthorization[]
@@ -52,13 +61,16 @@ export type WorkspaceAdmissionResult = {
 type WorkspaceAdmissionProfile = {
   loadMs: number; prepareMs: number; policyMs: number; indexMs: number; transitionsMs: number; resultMs: number
   changeCount: number; proofCount: number; snapshotBytes: number; operationCount: number
+  reusedChanges: number; evaluatedChanges: number
+  extensionFallback?: "authority" | "proof" | "history"
 }
 
 type CausalAdmissionStatus =
   | { type: "admitted"; role: "owner" | "editor" | "visitor" | "automation" }
   | { type: "quarantined" | "pending"; reason: string }
 
-type AdmissionPolicy = Pick<RustStateCore, "authorizationRecordPages" | "prepareWriteEvidence" | "evaluateCausalAdmission">
+type AdmissionPolicy = Pick<RustStateCore, "authorizationRecordPages" | "prepareWriteEvidence" | "evaluateCausalAdmission"> &
+  Partial<Pick<RustStateCore, "evaluateCausalAdmissionExtension">>
 type AdmissionPlan = {
   decisions: Array<{ hash: string; status: CausalAdmissionStatus }>
   verifiedAuthorizations: WorkspaceChangeAuthorization[]
@@ -117,6 +129,57 @@ function admissionSnapshot(workspaceId: string, authority: WorkspaceWriteAuthori
     departures: authority.departures }
 }
 
+/** Different devices can reorder. The verifier selects the first certificate per device. */
+function orderedDeviceCertificates(certificates: WorkspaceWriteAuthorityEvidence["currentOwner"]["certificates"]) {
+  return certificates?.slice().sort((left, right) => left.payload.deviceId.localeCompare(right.payload.deviceId))
+}
+
+export function admissionAuthorityIdentity(authority: WorkspaceWriteAuthorityEvidence): string {
+  const withSortedCertificates = (owner: WorkspaceWriteAuthorityEvidence["currentOwner"]) => ({
+    ...owner, certificates: orderedDeviceCertificates(owner.certificates),
+  })
+  return canonicalizeJson({ ...authority, currentOwner: withSortedCertificates(authority.currentOwner),
+    genesisOwner: withSortedCertificates(authority.genesisOwner) })
+}
+
+function admissionProofIdentity({ signed, publicKey, certificates, grant }: WorkspaceChangeAuthorization) {
+  // Owner certificates have already been applied to the effective authority.
+  return canonicalizeJson({ signed, publicKey, certificates: orderedDeviceCertificates(certificates), grant: grant ?? null })
+}
+
+function extendAdmission(base: WorkspaceAdmissionBase | undefined, authority: WorkspaceWriteAuthorityEvidence,
+  input: { records: unknown[]; snapshot: ReturnType<typeof admissionSnapshot>; nowMs: number }, policy: AdmissionPolicy) {
+  if (!base || !policy.evaluateCausalAdmissionExtension) return
+  if (admissionAuthorityIdentity(authority) !== base.authorityIdentity) {
+    return { fallback: "authority" as const }
+  }
+  const previousHashes = new Set(base.decisions.map(decision => decision.hash))
+  const previousProofs = new Set(base.records.map(admissionProofIdentity))
+  const retainedProofs = new Set<string>()
+  for (const record of input.records as WorkspaceChangeAuthorization[]) {
+    if (!record.signed.payload.hashes.some(hash => previousHashes.has(hash))) continue
+    const proof = admissionProofIdentity(record)
+    if (!previousProofs.has(proof)) return { fallback: "proof" as const }
+    retainedProofs.add(proof)
+  }
+  if (previousProofs.size !== retainedProofs.size) return { fallback: "proof" as const }
+  try {
+    const result = policy.evaluateCausalAdmissionExtension(base.document, base.decisions, input)
+    return { ...result, plan: result.plan as AdmissionPlan, previousHashes }
+  } catch (error) {
+    if (!String(error).includes("Causal admission extension is not applicable:")) throw error
+    return { fallback: "history" as const }
+  }
+}
+
+function evaluatePlan(input: Omit<WorkspaceAdmissionInput, "local" | "remote">, policy: AdmissionPolicy,
+  authority: WorkspaceWriteAuthorityEvidence, rawAdmission: Parameters<typeof extendAdmission>[2]) {
+  if (input.receivedBasis) return { plan: input.receivedBasis.admitTail(rawAdmission) as AdmissionPlan }
+  const extension = extendAdmission(input.admittedBase, authority, rawAdmission, policy)
+  if (extension && "plan" in extension) return { plan: extension.plan, extension }
+  return { plan: policy.evaluateCausalAdmission(rawAdmission) as AdmissionPlan, fallback: extension?.fallback }
+}
+
 function admitDocuments(input: Omit<WorkspaceAdmissionInput, "local" | "remote">, policy: AdmissionPolicy,
   local: Automerge.Doc<WorkspaceDocumentV2> | undefined, remote: Automerge.Doc<WorkspaceDocumentV2>, loadMs: number): WorkspaceAdmissionResult {
   let phaseStarted = performance.now()
@@ -138,26 +201,40 @@ function admitDocuments(input: Omit<WorkspaceAdmissionInput, "local" | "remote">
     snapshot: admissionSnapshot(remote.id, authority, rawBytes),
     nowMs: input.now,
   }
-  let plan: AdmissionPlan
-  try { plan = (input.receivedBasis ? input.receivedBasis.admitTail(rawAdmission) : policy.evaluateCausalAdmission(rawAdmission)) as AdmissionPlan }
+  let evaluation: ReturnType<typeof evaluatePlan>
+  try {
+    evaluation = evaluatePlan(input, policy, authority, rawAdmission)
+  }
   catch (error) { throw explainWorkspaceBoundaryFailure(error, merged, authority) }
+  const { plan, extension, fallback } = evaluation
   const policyMs = performance.now() - phaseStarted
   phaseStarted = performance.now()
   const changesByHash = new Map(Automerge.getChangesMetaSince(merged, []).map(change => [change.hash, change]))
   const operationCount = Automerge.stats(merged).numOps
-  const { targetsByHash, objectParents } = indexDocumentOperations(merged, changesByHash)
+  const changesToCheck = extension
+    ? new Map([...changesByHash].filter(([hash]) => !extension.previousHashes.has(hash))) : changesByHash
+  const { targetsByHash, objectParents } = indexDocumentOperations(merged, changesToCheck)
   const actorByHash = new Map<string, string>()
   for (const authorization of plan.verifiedAuthorizations) {
     for (const hash of authorization.signed.payload.hashes) actorByHash.set(hash, authorization.signed.payload.personId)
   }
   const indexMs = performance.now() - phaseStarted
   phaseStarted = performance.now()
-  assertPlanTransitions(input.receivedBasis, plan, merged, changesByHash, actorByHash, { targetsByHash, objectParents })
+  assertPlanTransitions(input.receivedBasis, plan, merged, changesToCheck, actorByHash, { targetsByHash, objectParents })
   const transitionsMs = performance.now() - phaseStarted
-  phaseStarted = performance.now()
+  const profile = { loadMs, prepareMs, policyMs, indexMs, transitionsMs, changeCount: changesByHash.size,
+    proofCount: incomingRecords.length, snapshotBytes: rawBytes.byteLength, operationCount,
+    reusedChanges: extension?.reusedChanges ?? 0, evaluatedChanges: changesToCheck.size, extensionFallback: fallback }
+  return admissionResult(plan, incomingRecords as WorkspaceChangeAuthorization[], merged, changesByHash, profile,
+    admissionAuthorityIdentity(authority))
+}
+
+function admissionResult(plan: AdmissionPlan, verifiedInputs: WorkspaceChangeAuthorization[],
+  merged: Automerge.Doc<WorkspaceDocumentV2>, changesByHash: ChangeIndex, profile: Omit<WorkspaceAdmissionProfile, "resultMs">,
+  authorityIdentity: string): WorkspaceAdmissionResult {
+  const phaseStarted = performance.now()
   const quarantinedHashes = plan.decisions.filter(decision => decision.status.type === "quarantined").map(decision => decision.hash)
   const pendingHashes = plan.decisions.filter(decision => decision.status.type === "pending").map(decision => decision.hash)
-  const verifiedInputs = incomingRecords as WorkspaceChangeAuthorization[]
   const verifiedAuthorizations = plan.verifiedAuthorizations.map(verified => {
     const original = verifiedInputs.find(record => record.signed.signature === verified.signed.signature &&
       canonicalizeJson(record.signed) === canonicalizeJson(verified.signed) && record.publicKey === verified.publicKey &&
@@ -177,9 +254,7 @@ function admitDocuments(input: Omit<WorkspaceAdmissionInput, "local" | "remote">
     try { authorizedHeads = Automerge.getHeads(authorized) }
     finally { Automerge.free(authorized) }
   }
-  return { profile: { loadMs, prepareMs, policyMs, indexMs, transitionsMs, resultMs: performance.now() - phaseStarted,
-      changeCount: changesByHash.size, proofCount: incomingRecords.length, snapshotBytes: rawBytes.byteLength,
-      operationCount },
+  return { profile: { ...profile, resultMs: performance.now() - phaseStarted }, authorityIdentity,
     neededHashes: [...changesByHash.keys()],
     admittedHashes: plan.decisions.filter(decision => decision.status.type === "admitted").map(decision => decision.hash),
     // Only proofs the Rust verifier matched to a real raw change may enter the

@@ -4,7 +4,8 @@ import { canonicalizeJson, type LocalProfile } from "./domain/identity"
 import { assertWorkspaceCapability } from "./domain/permissions"
 import { hasEntityKind, validateWorkspaceDoc, type WorkspaceDocumentV2 } from "./domain/model"
 import { planWorkspaceMigration } from "./domain/workspaceMigration"
-import type { WorkspaceChangeAuthorization } from "./product-replica"
+import type { WorkspaceAdmissionBase, WorkspaceChangeAuthorization, WorkspaceWriteAuthorityEvidence } from "./product-replica"
+import { admissionAuthorityIdentity } from "./product-replica/workspaceAdmission"
 import { receivedHistoryBasisIdentity } from "./product-replica/receivedHistoryBasisIdentity"
 import { stateRuntime } from "./stateContext"
 import { sameWorkspaceHeads } from "./stateCausalAdmission"
@@ -151,33 +152,47 @@ async function persistPreparedWorkspace(
 type AdmittedIncrementalFrontier = {
   evidence: StoredCausalEvidence
   credentialFingerprint: string
+  authority: WorkspaceWriteAuthorityEvidence
 }
 
 /** Local incremental frontier already admitted at this captured revision. Undefined asks for strict admission. */
 export async function recognizeAdmittedIncrementalFrontier(local: Automerge.Doc<WorkspaceDocumentV2>,
   remote: Automerge.Doc<WorkspaceDocumentV2>, authorization: unknown, evidence: StoredCausalEvidence | null | undefined,
-  transaction: WorkspaceTransactionContext, profile?: LocalProfile): Promise<AdmittedIncrementalFrontier | undefined> {
+  transaction: WorkspaceTransactionContext, profile?: LocalProfile): Promise<Omit<AdmittedIncrementalFrontier, "authority"> | undefined> {
+  if (remote.id !== local.id || documentHeads(local) !== documentHeads(remote)) return
+  const verified = await admittedLocalIncrementalFrontier(local, evidence, transaction, profile)
+  if (!verified) return
+  const records = packetMatchingVerifiedAuthority(authorization, verified.authority)
+  if (!records || !packetProofsMatchFrontier(records, authorization, verified.evidence)) return
+  const current = await localWorkspaceAdmissionAuthority(local, profile)
+  if (current.credentialFingerprint !== verified.credentialFingerprint ||
+    canonicalizeJson(current.authority) !== canonicalizeJson(verified.authority)) {
+    throw new Error("Workspace authority changed during validation. Retry synchronization.")
+  }
+  return { evidence: verified.evidence, credentialFingerprint: verified.credentialFingerprint }
+}
+
+async function admittedLocalIncrementalFrontier(local: Automerge.Doc<WorkspaceDocumentV2>,
+  evidence: StoredCausalEvidence | null | undefined, transaction: WorkspaceTransactionContext,
+  profile?: LocalProfile): Promise<AdmittedIncrementalFrontier | undefined> {
   const revision = transaction.capturedRevision
   const frontier = await reusableDeltaAdmission(local, transaction, profile, false)
-  if (!frontier || !incrementalEvidenceMatchesFrontier(evidence, frontier, local, remote, transaction)) return
+  if (!frontier || !incrementalEvidenceMatchesFrontier(evidence, frontier, local, transaction)) return
   const current = await localWorkspaceAdmissionAuthority(local, profile)
   if (frontier.authorityFingerprint !== current.fingerprint) return
-  const records = packetMatchingVerifiedAuthority(authorization, current.authority)
-  if (!records || !packetProofsMatchFrontier(records, authorization, evidence)) return
   const latest = await transaction.readDeltaFrontier()
   if (!sameFrontier(latest, frontier) || !sameFrontier(transaction.capturedFrontier, frontier) || transaction.capturedRevision !== revision) return
   const checked = await localWorkspaceAdmissionAuthority(local, profile)
   if (checked.fingerprint !== current.fingerprint) throw new Error("Workspace authority changed during validation. Retry synchronization.")
-  return { evidence, credentialFingerprint: checked.credentialFingerprint }
+  return { evidence, credentialFingerprint: checked.credentialFingerprint, authority: checked.authority }
 }
 
 function incrementalEvidenceMatchesFrontier(evidence: StoredCausalEvidence | null | undefined, frontier: WorkspaceDeltaFrontier,
-  local: Automerge.Doc<WorkspaceDocumentV2>, remote: Automerge.Doc<WorkspaceDocumentV2>,
+  local: Automerge.Doc<WorkspaceDocumentV2>,
   transaction: WorkspaceTransactionContext): evidence is StoredCausalEvidence {
   const checkpoint = evidence?.admissionCheckpoint
   if (!evidence?.authorizationEvidence?.length || !evidence.decisions.length || !checkpoint?.incremental) return false
   if (evidence.decisions.some(decision => decision.status.type !== "admitted")) return false
-  if (remote.id !== local.id || documentHeads(local) !== documentHeads(remote)) return false
   if (documentHeads(local) !== [...frontier.heads].sort().join() || !frontier.heads.every(head =>
     evidence.decisions.some(decision => decision.hash === head && decision.status.type === "admitted"))) return false
   const bound = { policy: checkpoint.policy, inputHash: checkpoint.inputHash, projectionHeads: [...checkpoint.projectionHeads].sort(),
@@ -281,7 +296,7 @@ async function prepareAuthorizedWorkspace(
     const opened = await openAdmissionInputs(id, remote, authorization, local, storage, receivedBasis, transaction)
     if (opened.reused && local) return { phase: "unchanged", remote, local, ...opened.reused, receivedBasis: opened.basis }
     return { phase: "ready", remote, local, receivedBasis: opened.basis,
-      admission: await admitRemoteEvidence(local, remote, authorization, opened.evidence, opened.basis) }
+      admission: await admitRemoteEvidence(local, remote, authorization, opened.evidence, opened.basis, transaction) }
   } catch (error) {
     releaseAdmissionDocuments(remote, local)
     throw error
@@ -340,14 +355,25 @@ async function admitRemoteEvidence(
   authorization: unknown,
   evidence: StoredCausalEvidence | null,
   basis?: WasmVerifiedReceivedHistoryBaseline,
+  transaction?: WorkspaceTransactionContext,
 ) {
   const rawLocal = evidence ? Automerge.load<WorkspaceDocumentV2>(evidence.bytes) : local
   try {
+    const incremental = local && transaction && !basis && evidence?.admissionCheckpoint?.incremental
+      ? await admittedLocalIncrementalFrontier(local, evidence, transaction, stateRuntime.currentProfile ?? undefined)
+      : undefined
+    const base = incremental && localAdmissionBase(incremental)
     return await evaluateIncomingWorkspaceAdmission(rawLocal, remote, authorization,
-      (evidence?.authorizationEvidence ?? []) as WorkspaceChangeAuthorization[], basis)
+      (evidence?.authorizationEvidence ?? []) as WorkspaceChangeAuthorization[], basis, evidence ?? undefined, base)
   } finally {
     if (evidence) Automerge.free(rawLocal!)
   }
+}
+
+function localAdmissionBase({ evidence, authority, credentialFingerprint }: AdmittedIncrementalFrontier):
+  WorkspaceAdmissionBase & { credentialFingerprint: string } {
+  return { document: evidence.bytes, decisions: evidence.decisions, credentialFingerprint,
+    records: evidence.authorizationEvidence as WorkspaceChangeAuthorization[], authorityIdentity: admissionAuthorityIdentity(authority) }
 }
 
 function validateRemoteWorkspace(remote: Automerge.Doc<WorkspaceDocumentV2>, id: string): boolean {

@@ -10,11 +10,11 @@ import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { mergeAuthorizationRecords, putRecords, records, type WorkspaceChangeAuthorization } from "./workspaceChangeProofStore"
 import { assertLearnedIdentityDeviceActive } from "../domain/identityAuthority"
 import { receivedHistoryBasisIdentity } from "../product-replica/receivedHistoryBasisIdentity"
-import type { IncomingAuthorizationBundle, WorkspaceAdmissionResult, WorkspaceWriteAuthorityEvidence } from "../product-replica"
+import type { IncomingAuthorizationBundle, WorkspaceAdmissionBase, WorkspaceAdmissionResult, WorkspaceWriteAuthorityEvidence } from "../product-replica"
 import { readWorkspaceSnapshot, type StoredCausalEvidence } from "../storageJournal"
 import { defaultStorage } from "../storage"
 import { meshTrace } from "./meshTrace"
-import { admissionInputHash, createAdmissionCheckpoint, hasOnlyStoredAdmissionProofs, matchesAdmissionCheckpoint,
+import { admissionInputHash, bindAdmittedBase, createAdmissionCheckpoint, hasOnlyStoredAdmissionProofs, matchesAdmissionCheckpoint, retainedAdmissionBase,
   type WorkspaceAdmissionCheckpoint } from "./workspaceAdmissionCheckpoint"
 
 import type { WorkspaceRole } from "../domain/permissions"
@@ -403,10 +403,11 @@ export async function validateIncomingChangeAuthorizations(local: Automerge.Doc<
   return (await evaluateIncomingWorkspaceAdmission(local, remote, raw)).verifiedAuthorizations
 }
 
-/** Reclassifies complete raw history, including hashes already stored locally. */
+/** Admit remote history using the exact locally verified base when available. */
 export async function evaluateIncomingWorkspaceAdmission(local: Automerge.Doc<WorkspaceDocumentV2> | undefined,
   remote: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown, priorEvidenceRecords: Authorization[] = [],
-  receivedBasis?: WasmVerifiedReceivedHistoryBaseline): Promise<WorkspaceAdmissionResult & { rawBytes: Uint8Array; credentialFingerprint: string; admissionCheckpoint?: WorkspaceAdmissionCheckpoint }> {
+  receivedBasis?: WasmVerifiedReceivedHistoryBaseline, storedEvidence?: StoredCausalEvidence,
+  localBase?: WorkspaceAdmissionBase & { credentialFingerprint: string }): Promise<WorkspaceAdmissionResult & { rawBytes: Uint8Array; credentialFingerprint: string; admissionCheckpoint?: WorkspaceAdmissionCheckpoint }> {
   const [{ rememberWorkspaceAdmission, reusedWorkspaceAdmission }, { credential, frozenCredential, knownAuthority, combinedBundle, context }] =
     await Promise.all([import("./workspaceAdmissionReuse"),
       workspaceAdmissionContext(local ?? remote, raw, priorEvidenceRecords, Boolean(local), undefined, receivedBasis)])
@@ -417,13 +418,15 @@ export async function evaluateIncomingWorkspaceAdmission(local: Automerge.Doc<Wo
   const sourceHeads = { remote: Automerge.getHeads(remote).sort(), local: local && local !== remote ? Automerge.getHeads(local).sort() : null }
   const reuseKey = canonicalizeJson({ sourceHeads, ...context, receivedBasis: receivedHistoryBasisIdentity(receivedBasis), learnedIdentityAuthorities })
   const reused = reusedWorkspaceAdmission(remote.id, reuseKey)
-  const rawBytes = reused?.rawBytes ?? rawAdmissionSnapshot(local, remote)
+  const base = await retainedAdmissionBase(sourceHeads.local ?? sourceHeads.remote, storedEvidence, frozenCredential, localBase)
+  const rawBytes = reused?.rawBytes ?? rawAdmissionSnapshot(local, remote, base, sourceHeads.local)
   // Causal admission uses signed change-time authority, not receiver wall time.
   const plan = reused?.result ?? await (await import("./workspaceAdmissionClient")).runWorkspaceAdmission({ workspaceId: remote.id,
     receivedBasis, remote: rawBytes.slice(), authorization: combinedBundle, knownAuthority, now: Date.now(),
+    admittedBase: base,
   })
   if (reused) meshTrace("workspace.admission.reused", { workspaceId: remote.id, elapsedMs: Math.round(performance.now() - startedAt) })
-  else if (plan.profile) meshTrace("workspace.admission.profile", { workspaceId: remote.id, ...plan.profile })
+  else if (plan.profile) meshTrace("workspace.admission.profile", { workspaceId: remote.id, ...plan.profile, baseAvailable: Boolean(base) })
   const admissionCheckpoint = await incomingAdmissionCheckpoint(rawBytes, context, plan)
   // Authority may change while either policy computation or hashing yields.
   const currentCredential = await incomingCredential(remote.id)
@@ -434,8 +437,9 @@ export async function evaluateIncomingWorkspaceAdmission(local: Automerge.Doc<Wo
 }
 
 async function incomingAdmissionCheckpoint(bytes: Uint8Array, context: unknown, plan: WorkspaceAdmissionResult) {
-  return plan.authorizedHeads && plan.decisions
-    ? createAdmissionCheckpoint(await admissionInputHash(bytes, context), plan.authorizedHeads, plan.decisions) : undefined
+  if (!plan.authorizedHeads || !plan.decisions) return
+  const checkpoint = await createAdmissionCheckpoint(await admissionInputHash(bytes, context), plan.authorizedHeads, plan.decisions)
+  return bindAdmittedBase(checkpoint, bytes, plan.verifiedAuthorizations, plan.authorityIdentity)
 }
 
 /**
@@ -534,8 +538,11 @@ async function assertLearnedIdentityAuthoritiesUnchanged(
   }
 }
 
-function rawAdmissionSnapshot(local: Automerge.Doc<WorkspaceDocumentV2> | undefined, remote: Automerge.Doc<WorkspaceDocumentV2>) {
+function rawAdmissionSnapshot(local: Automerge.Doc<WorkspaceDocumentV2> | undefined, remote: Automerge.Doc<WorkspaceDocumentV2>,
+  base: WorkspaceAdmissionBase | undefined, heads: string[] | null) {
   if (!local || local === remote) return Automerge.save(remote)
+  // A fully admitted local document has no hidden or pending changes to merge.
+  if (base && heads && Automerge.hasHeads(remote, heads)) return Automerge.save(remote)
   const merged = Automerge.merge(Automerge.clone(local), remote)
   try { return Automerge.save(merged) }
   finally { Automerge.free(merged) }
