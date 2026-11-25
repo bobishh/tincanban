@@ -70,6 +70,7 @@ watch(identityBoardNoticeVisible, async visible => {
 }, { immediate: true })
 const identityBoardsBlocked = computed(() => {
   if (!identityBoardNoticeVisible.value) return false
+  if (app.workspace.availableWorkspaces.value.some(workspace => workspace.id !== app.workspace.activeWorkspace.id)) return false
   void app.workspace.docVersion.value
   const doc = app.workspace.getActiveDoc()
   return !doc || !isEmptyIdentityBoard.value || isEmptyIdentityBoard.value(doc)

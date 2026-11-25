@@ -1,19 +1,26 @@
 import { expect, test } from "./support/coverage"
 
-for (const width of [320, 1280]) for (const available of [false, true]) {
-  test(`Given interrupted sign-in board loading at ${width}px and ${available ? 'an edited local board' : 'only the starter'}, when loading waits or fails, then ${available ? 'keep available edits usable after failure' : 'cover the starter until retry succeeds'}`, async ({ page }, info) => {
+for (const width of [320, 1280]) for (const startingBoard of ["only the starter", "an edited local board", "the starter with another local board"]) {
+  const available = startingBoard !== "only the starter"
+  test(`Given interrupted sign-in board loading at ${width}px and ${startingBoard}, when loading waits or fails, then ${available ? 'keep saved boards usable' : 'cover the starter until retry succeeds'}`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 844 })
     await page.goto("/")
     await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled()
-    await page.evaluate(async available => {
+    const starterBoardId = await page.evaluate(async startingBoard => {
       const app = (await import("/src/state.ts")).useTincanban()
       await app.whenReady()
-      if (available) await app.createItemAsync({ title: "Retained card", parentId: app.genericColumns.value[0]!.id })
+      const starterWorkspaceId = app.activeWorkspace.id
+      const starterBoardId = app.activeBoard.value!.id
+      if (startingBoard === "the starter with another local board") await app.createWorkspaceAsync("Saved local board", "blank")
+      if (startingBoard !== "only the starter") await app.createItemAsync({ title: "Retained card", parentId: app.genericColumns.value[0]!.id })
+      if (startingBoard === "the starter with another local board") await app.switchWorkspace(starterWorkspaceId)
       const { beginIdentityBoardLoading, confirmIdentityCatalogInstalled } = await import("/src/app/identityBoardLoading.ts")
       const profile = app.getCurrentProfile()!
       const pending = await beginIdentityBoardLoading(profile)
       await confirmIdentityCatalogInstalled(profile, pending)
-    }, available)
+      return starterBoardId
+    }, startingBoard)
+    if (startingBoard === "the starter with another local board") await page.waitForURL(`**/boards/${starterBoardId}/untitled`)
     // Hold the real loader at its boundary; keep the application's persisted
     // resume, error, retry and board-selection paths intact.
     await page.route("**/src/app/loadIdentityBoards.ts", async route => {
@@ -44,6 +51,12 @@ for (const width of [320, 1280]) for (const available of [false, true]) {
     }
     const pendingStatus = available ? page.getByRole("status").filter({ hasText: "Loading the rest of your boards" }) : cover.getByRole("status")
     await expect(pendingStatus).toBeVisible()
+    if (startingBoard === "the starter with another local board") {
+      await page.getByRole("button", { name: /^Saved local board/ }).click()
+      await expect(page.getByRole("button", { name: "Open Retained card", exact: true })).toBeVisible()
+      await page.getByRole("button", { name: "Open workspaces", exact: true }).click()
+      await expect(pendingStatus).toBeVisible()
+    }
     if (available) {
       await expect(cover).toHaveCount(0)
       await expect(page.locator("main.shell")).not.toHaveAttribute("inert")

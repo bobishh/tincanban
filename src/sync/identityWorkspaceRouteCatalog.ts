@@ -7,7 +7,7 @@ import type { MeshWorkspaceEnvelope } from "./durableMeshBase"
 import { validateOptionalIdentityComponent, type IdentityDeviceComponent } from "./identityDeviceStateCodec"
 import { mergePeerRecords, peerStore, type PeerStore, type WorkspacePeerRecord } from "./peerStore"
 import { departures, deviceRevocations, ownerAuthorities, ownershipTransfers, revocations,
-  successionClaims, successionPolicy, successionVotes } from "./durableMeshBase"
+  successionClaims, successionPolicy, successionVotes } from "./workspaceCredentialCatalog"
 import { verifyWorkspaceMemberBundle, type WorkspaceMemberBundle } from "./meshRecords"
 import { packWorkspaceRoutes, unpackWorkspaceRoutes } from "./identityWorkspaceRoutePacking"
 

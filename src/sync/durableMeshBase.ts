@@ -1,5 +1,5 @@
 import { type LocalProfile} from "../domain/identity"
-import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
+import type { WorkspaceGrant } from "../domain/model"
 import { BrowserMeshGossip, MeshReconnectPolicy, MeshDialCancelled, MeshNodeRestart, isMeshDialNetworkFailure } from "@meta-uber/mesh-runtime"
 import type { BrowserMeshLifecycle } from "@meta-uber/mesh-runtime"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
@@ -14,6 +14,9 @@ import { peerStore, type PeerStore, type WorkspaceMeshCredential} from "./peerSt
 import { startPersistentNode } from "./persistentNode"
 import type { SyncAcceptor, SyncConnection, SyncNode, SyncTransport} from "./transport"
 import { publishGossipPacket, type LiveWorkspaceSync, type WorkspaceReplica, type WorkspaceSetStore } from "./workspaceSet"
+import { revocations } from "./workspaceCredentialCatalog"
+export { departures, deviceRevocations, meshCatalog, ownerAuthorities, ownershipTransfers, revocations,
+  successionClaims, successionPolicy, successionVotes } from "./workspaceCredentialCatalog"
 type ScopeSuccessionTransfer = {
   fromControlEpoch: number
   claim: WorkspaceSuccessionClaim
@@ -137,36 +140,11 @@ export function isEnvelope(value: unknown): value is MeshWorkspaceEnvelope {
   return meshRustRuntime().state.isWorkspaceEnvelope(value, Date.now())
 }
 
-export type MeshCatalog = { departures?: WorkspaceDeparture[]; deviceRevocations?: WorkspaceDeviceRevocation[]; revocations?: WorkspaceRevocation[]; ownershipTransfers?: WorkspaceOwnershipTransfer[]
-  successionPolicy?: WorkspaceSuccessionPolicy; successionVotes?: WorkspaceSuccessionVote[]; successionClaims?: WorkspaceSuccessionClaim[] }
 export const CAUSAL_WRITE_ADMISSION_CAPABILITY = "causal-write-admission-v1"
 export function assertRequiredMeshCapabilities(capabilities: unknown): asserts capabilities is string[] {
   meshRustRuntime().state.validateMeshCapabilities(capabilities)
   if (!Array.isArray(capabilities) || !capabilities.includes(CAUSAL_WRITE_ADMISSION_CAPABILITY))
     throw new Error("Peer needs causal write admission support. Upgrade the peer and reconnect.")
-}
-
-export function meshCatalog(credential: Pick<WorkspaceMeshCredential, "catalog">): MeshCatalog {
-  return (credential.catalog as MeshCatalog | undefined) ?? {}
-}
-
-export function revocations(credential: Pick<WorkspaceMeshCredential, "catalog">): WorkspaceRevocation[] {
-  const value = meshCatalog(credential)
-  return Array.isArray(value?.revocations) ? value.revocations : []
-}
-
-export function ownershipTransfers(credential: WorkspaceMeshCredential): WorkspaceOwnershipTransfer[] {
-  const value = meshCatalog(credential)
-  return Array.isArray(value.ownershipTransfers) ? value.ownershipTransfers : []
-}
-
-export function successionPolicy(credential: WorkspaceMeshCredential) { return meshCatalog(credential).successionPolicy }
-export function successionVotes(credential: WorkspaceMeshCredential) { return meshCatalog(credential).successionVotes ?? [] }
-export function successionClaims(credential: WorkspaceMeshCredential) { return meshCatalog(credential).successionClaims ?? [] }
-
-export function ownerAuthorities(credential: WorkspaceMeshCredential): WorkspaceAuthority[] {
-  return [{ personId: credential.ownerPersonId, publicKey: credential.ownerPublicKey,
-    certificates: credential.ownerCertificates as DeviceCertificate[] }, ...((credential.ownerHistory ?? []) as WorkspaceAuthority[])]
 }
 
 export function revokedPersonIds(credential: WorkspaceMeshCredential) {
@@ -385,14 +363,10 @@ export abstract class DurableMeshBase {
   protected abstract publishWorkspace(workspaceId: string): Promise<void>
 }
 
-export function deviceRevocations(credential: WorkspaceMeshCredential): WorkspaceDeviceRevocation[] {
-  return meshCatalog(credential).deviceRevocations ?? []
-}
 export function isDeviceRevoked(credential: WorkspaceMeshCredential, personId: string, deviceId: string): boolean {
   return meshRustRuntime().state.isDeviceRevoked(credential, personId, deviceId)
 }
 
-export function departures(credential: WorkspaceMeshCredential): WorkspaceDeparture[] { return meshCatalog(credential).departures ?? [] }
 export function hasLeftWorkspace(credential: WorkspaceMeshCredential, personId: string, grant?: WorkspaceGrant): boolean {
   return meshRustRuntime().state.hasLeftWorkspace(credential, personId, grant ?? null)
 }
