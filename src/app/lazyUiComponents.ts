@@ -4,6 +4,12 @@ const pendingStatus = (message: string): Component => ({
   setup: () => () => h("div", { role: "status", "aria-live": "polite" }, message),
 })
 
+export const MeshRelaySettings = defineAsyncComponent<Component>(async () => {
+  const [{ default: Settings }, { readBrowserRelaySettings, saveBrowserRelaySettings }] = await Promise.all([
+    import("../components/MeshRelaySettings.vue"), import("../browserRelaySettings"),
+  ])
+  return { setup: () => () => h(Settings, { read: readBrowserRelaySettings, save: saveBrowserRelaySettings }) }
+})
 export const IdentitySettingsPanel = defineAsyncComponent<Component>(() => import("../components/IdentitySettingsPanel.vue"))
 export const PublicBoardApp = defineAsyncComponent<Component>(() => import("../public/PublicBoardApp.vue"))
 export const CausalChangeReview = defineAsyncComponent<Component>({

@@ -537,16 +537,21 @@ jobs:
         if: runner.os == 'Linux'
         run: bash scripts/use-primary-ubuntu-mirror.sh
       - run: npx playwright install --with-deps chromium
+      - name: Build the local Iroh relay fixture
+        run: cargo install --locked --version 0.98.0 --features server --root "$RUNNER_TEMP/iroh-relay" iroh-relay
       - name: Verify archive recovery and attachment lifecycle
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
+          TINCANBAN_E2E_IROH_RELAY_BINARY: ${{ runner.temp }}/iroh-relay/bin/iroh-relay
           PROJECTS: attachments-rusty attachment-session-recovery complete-device-state
         run: |
-          status=0
-          for project in $PROJECTS; do
-            npx playwright test --reporter=list --project="$project" --output="test-results/$project" || status=1
-          done
-          exit "$status"
+          node scripts/with-test-iroh-relay.mjs bash -c '
+            status=0
+            for project in $PROJECTS; do
+              npx playwright test --reporter=list --project="$project" --output="test-results/$project" || status=1
+            done
+            exit "$status"
+          '
       - uses: actions/upload-artifact@v6
         if: failure()
         with:

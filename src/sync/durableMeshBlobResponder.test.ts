@@ -44,7 +44,7 @@ async function fixture(samePersonApp = false) {
   const frame = encodePairingFrame(BLOB_REQUEST_FRAME, secret, new TextEncoder().encode(JSON.stringify(request)))
   const frames: Uint8Array[] = []
   const stream = { send: vi.fn(async (frame: Uint8Array) => { frames.push(frame) }), closeSend: vi.fn(async () => {}) }
-  const respond = () => respondToCurrentBlobRequest({ workspaceId, deviceId: remote.device.deviceId, secret,
+  const respond = (transport = "webrtc") => respondToCurrentBlobRequest({ transport, workspaceId, deviceId: remote.device.deviceId, secret,
     blob, store: store as never, ensureCurrent: guard }, stream, frame)
   return { owner, remote, workspaceId, blob, bytes, frames, respond, guard,
     revokeDevice: async (local = false) => {
@@ -63,6 +63,13 @@ it("Given an authorized signed blob request, when its live scope remains current
   const f = await fixture()
   await f.respond()
   expect(f.frames.map(frame => inspectPairingFrame(frame).type)).toContain(BLOB_RESPONSE_FRAME)
+})
+
+it("Given an authorized signed blob request arrives over an Iroh relay, when handling it, then read and send no file bytes", async () => {
+  const f = await fixture()
+  await expect(f.respond("irohRelay")).rejects.toThrow(/WebRTC/)
+  expect(f.blob.read).not.toHaveBeenCalled()
+  expect(f.frames).toHaveLength(0)
 })
 
 for (const change of ["remote-device", "local-device", "grant", "session"] as const) {

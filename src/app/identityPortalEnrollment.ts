@@ -4,6 +4,7 @@ import { createBrowserIdentityEnrollmentHost, serveIdentityProfileSync,
 import { defaultProofStore, certHashDefault } from "../domain/proofs"
 import { isCurrentIdentityProfile, type LocalProfile } from "../domain/identity"
 import { defaultStorage } from "../storage"
+import { browserRelayUrls } from "../browserRelaySettings"
 import { createIdentityEnrollmentProfileStore } from "../sync/identityEnrollmentProfile"
 import { writeLocal } from "../localDb"
 import { identityEnrollmentPrefix } from "./identityEnrollmentReceipt"
@@ -23,7 +24,7 @@ export async function startIdentityProfileHost(options: {
   if (!options.profile.privateKeys.identityPrivateKey) throw new Error("This device cannot create a portable Identity profile")
   const certificates = await trustedCertificates(options.profile)
   const host = await createBrowserIdentityEnrollmentHost({ profile: options.profile, certificates,
-    transportSeed: crypto.getRandomValues(new Uint8Array(32)), origin: options.portalOrigin })
+    transportSeed: crypto.getRandomValues(new Uint8Array(32)), origin: options.portalOrigin, relayUrls: browserRelayUrls() })
   options.onInvite(host.inviteUrl)
   options.onStatus("Waiting for the Identity portal to connect…")
   try {

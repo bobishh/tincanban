@@ -15,6 +15,7 @@ vi.mock("./blobRequestSigning", () => ({ blobRequestSigning: vi.fn(async () => (
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
 function session(connectionId: string, connection: SessionEntry["connection"] = {
+  transport: "webrtc",
   openStream: vi.fn(async () => ({ send: async () => {}, read: async () => Uint8Array.of(1), closeSend: async () => {} })),
   acceptStream: vi.fn(async () => ({ send: async () => {}, read: async () => Uint8Array.of(1), closeSend: async () => {} })),
   close: vi.fn(async () => {}),
@@ -23,6 +24,26 @@ function session(connectionId: string, connection: SessionEntry["connection"] = 
     remoteIssuedAt: "2026-10-15T00:00:00Z", direction: "incoming", connection,
     session: {} as never, remotePersonId: "peer", blobTransferSupported: true, evict: async () => {} }
 }
+
+it("Given a workspace has a relay session and a WebRTC session, when fetching an attachment, then request only over WebRTC", async () => {
+  const descriptor: meshBlob.BlobDescriptor = { kind: "blob", version: 1, blobId: `sha256:${"C".repeat(43)}`,
+    name: "private.bin", mediaType: "application/octet-stream", size: 1 }
+  const authority = { profile: {} as LocalProfile, identity: "identity", credential: "credential", transportSecret: "secret" }
+  const relay = session("relay", { ...session("relay").connection, transport: "irohRelay" })
+  const direct = session("direct", { ...session("direct").connection, transport: "webrtc" })
+  const request = vi.spyOn(meshBlob, "requestBlob").mockImplementation(async connection => {
+    await connection.openStream()
+    return Uint8Array.of(7)
+  })
+  const blob = { read: vi.fn(async () => undefined), write: vi.fn(async () => {}) }
+
+  await expect(fetchBlobFromCurrentSessions({ workspaceId: "workspace", descriptor, blob,
+    readAuthority: async () => authority, sessions: () => [relay, direct], isCurrent: () => true,
+    currentRunId: () => 1, isRunning: () => true })).resolves.toEqual(Uint8Array.of(7))
+  expect(request).toHaveBeenCalledOnce()
+  expect(relay.connection.openStream).not.toHaveBeenCalled()
+  expect(direct.connection.openStream).toHaveBeenCalledOnce()
+})
 
 it("Given a late replacement and a four-chunk attachment, when each chunk makes bounded progress, then finish within the size-aware attempt budget", async () => {
   const descriptor: meshBlob.BlobDescriptor = { kind: "blob", version: 1, blobId: `sha256:${"A".repeat(43)}`,
@@ -87,6 +108,7 @@ it("Given the peer closes a blob response stream, when recovery retries, then on
   const authority = { profile: {} as LocalProfile, identity: "identity", credential: "credential", transportSecret: "secret" }
   const responseFrames = [new Uint8Array(), bytes]
   const connection = {
+    transport: "webrtc",
     openStream: async () => ({
       send: async () => {},
       read: async () => responseFrames.shift() ?? bytes,
@@ -107,6 +129,7 @@ it("Given the peer closes a blob response stream, when recovery retries, then on
   expect(blob.write).toHaveBeenCalledOnce()
 
   const malformedConnection = {
+    transport: "webrtc",
     openStream: async () => ({
       send: async () => {},
       read: async () => Uint8Array.of(1),

@@ -1,14 +1,9 @@
 import type { GossipStateMachine } from "@meta-uber/mesh-replication"
-import type { MeshStream, IrohConnection } from "@meta-uber/mesh-transport"
+import type { MeshStream, MeshConnection, IrohConnection } from "@meta-uber/mesh-transport"
 
 export type DuplexStream = MeshStream
 
-export type SyncConnection = {
-  readonly remoteEndpointId?: string
-  openStream: () => Promise<DuplexStream>
-  acceptStream: () => Promise<DuplexStream>
-  close: () => Promise<void>
-}
+export type SyncConnection = MeshConnection
 
 export type SyncAcceptor = {
   accept: () => Promise<IrohConnection | undefined>

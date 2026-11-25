@@ -36,7 +36,7 @@ import { useMemberAvatars } from "./app/useMemberAvatars"
 import { useAppPublicBoards } from "./app/useAppPublicBoards"
 import { createIdentityOwnerActions } from "./app/identityOwnerActions"
 import { createWorkspaceInviteAction } from "./app/identityPortalFlow"
-import { CausalChangeReview, ColumnDialog, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, PublicBoardApp, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
+import { CausalChangeReview, ColumnDialog, IdentitySettingsPanel, ItemDetailDialog, MeshRelaySettings, MobileDrawer, MoveItemDialog, ObjectConversationLayer, PublicBoardApp, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 import WorkspaceSyncMount from "./components/WorkspaceSyncMount.vue"
 
 const app = useAppController()
@@ -309,6 +309,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
             :inspect-file="inspectPrivateRecovery" :restore="restorePrivateRecovery" :has-workspace-copy="hasWorkspaceCopy"
             :workspace-title="workspaceTitle" :current-person-id="chat.personId.value" />
         </IdentitySettingsPanel>
+        <MeshRelaySettings />
         <p v-if="avatarNotice" role="status">{{ avatarNotice }}</p>
       </template>
       <template #workspace>
@@ -334,6 +335,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
             :inspect-file="inspectPrivateRecovery" :restore="restorePrivateRecovery" :has-workspace-copy="hasWorkspaceCopy"
             :workspace-title="workspaceTitle" :current-person-id="chat.personId.value" />
         </IdentitySettingsPanel>
+        <MeshRelaySettings />
         <p v-if="avatarNotice" role="status">{{ avatarNotice }}</p>
       </section>
     </DialogWindow>

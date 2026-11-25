@@ -15,11 +15,12 @@ type BlobCache = {
 
 /** Serve a signed request only while its captured session and live workspace authority remain current. */
 export async function respondToCurrentBlobRequest(input: {
-  workspaceId: string; deviceId: string; secret: string; store: Pick<PeerStore, "getPeer">;
+  transport: SyncConnection["transport"]; workspaceId: string; deviceId: string; secret: string; store: Pick<PeerStore, "getPeer">;
   blob?: Pick<BlobCache, "read"> & { resolve(workspaceId: string, blobId: string): Promise<BlobDescriptor | undefined> }
   ensureCurrent(): Promise<void>
 }, stream: Parameters<typeof respondToBlobRequest>[0], frame: Uint8Array): Promise<void> {
   try {
+    if (input.transport !== "webrtc") throw new Error("A WebRTC connection is required for attachment transfer")
     await input.ensureCurrent()
     const blob = input.blob
     if (!blob) throw new Error("Blob storage is unavailable")
@@ -107,7 +108,7 @@ export async function fetchBlobFromCurrentSessions(input: BlobFetchInput): Promi
     if (Date.now() >= recoveryDeadline) break
     assertRuntime(input, runId)
     const before = await readUnchangedAuthority(input, originalAuthority)
-    const sessions = input.sessions()
+    const sessions = input.sessions().filter(entry => entry.connection.transport === "webrtc")
     if (sessions.length === 0) {
       await waitForNextSession()
       continue
@@ -288,6 +289,7 @@ async function persistDepartureBlob(input: DepartureBlobInput, descriptor: BlobD
   if (!blob) throw new Error("Departure file storage is unavailable")
   await ensureCurrent()
   if (await blob.read(descriptor)) return
+  if (input.connection.transport !== "webrtc") throw new Error("A WebRTC connection is required for attachment transfer")
   const signing = await blobRequestSigning(input.profile, input.workspaceId, descriptor.blobId, async () => {
     await ensureCurrent()
     return JSON.stringify([input.workspaceId, input.connectionId])

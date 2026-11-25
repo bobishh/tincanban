@@ -89,8 +89,10 @@ async function startOwnerReconnectHost(options: Options, session: Session) {
     const ensureCurrent = ensureAuthority(options, run, profile, fingerprint, authorityFingerprint)
     const title = options.availableWorkspaces.value.find(workspace => workspace.id === workspaceId)?.title ?? "Board"
     const abort = session.abort = new AbortController()
-    const { startBrowserOwnerReconnectHost } = await import("@meta-uber/mesh-runtime/ownerReconnect")
-    const host = await startBrowserOwnerReconnectHost({ profile, authorityView, origin: options.origin(), workspaceId, expectedOwner,
+    const [{ startBrowserOwnerReconnectHost }, { browserRelayUrls }] = await Promise.all([
+      import("@meta-uber/mesh-runtime/ownerReconnect"), import("../browserRelaySettings"),
+    ])
+    const host = await startBrowserOwnerReconnectHost({ profile, authorityView, origin: options.origin(), workspaceId, expectedOwner, relayUrls: browserRelayUrls(),
       readSource: peer => {
         if (peer.workspaceId !== workspaceId) throw new Error("Owner reconnect changed board")
         return options.adapter!.readSource({ profile, peer, workspaceId, title, store, mesh, ensureCurrent })
@@ -136,8 +138,10 @@ async function connectOwnerReconnect(options: Options, session: Session, invitat
     const fingerprint = canonicalizeJson({ identity: profile.identity, device: profile.device })
     const authorityFingerprint = canonicalizeJson(authorityView)
     const ensureCurrent = ensureAuthority(options, run, profile, fingerprint, authorityFingerprint, abort.signal)
-    const { connectBrowserOwnerReconnect } = await import("@meta-uber/mesh-runtime/ownerReconnect")
-    await connectBrowserOwnerReconnect({ invitation, profile, authorityView, ensureCurrent, signal: abort.signal,
+    const [{ connectBrowserOwnerReconnect }, { browserRelayUrls }] = await Promise.all([
+      import("@meta-uber/mesh-runtime/ownerReconnect"), import("../browserRelaySettings"),
+    ])
+    await connectBrowserOwnerReconnect({ invitation, profile, authorityView, relayUrls: browserRelayUrls(), ensureCurrent, signal: abort.signal,
       approve: request => requestOwnerConsent(options, session, request, invitation.workspaceId, ensureCurrent),
       commit: (verified, history) => commitOwnerReconnect(options, invitation, profile, store, verified, history, ensureCurrent),
     })

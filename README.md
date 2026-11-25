@@ -55,6 +55,12 @@ runs in `npm run test:rusty-management`; build Rusty, `history_archive_verify` a
 run with `playwright.identity-bootstrap.config.ts` and an isolated Identity provider,
 rather than being silently skipped by the core browser suite.
 
+To verify archive recovery against a local Iroh relay, install
+`iroh-relay` 0.98.0 with its `server` feature. Run
+`node scripts/with-test-iroh-relay.mjs npx playwright test --project=attachment-session-recovery`.
+Set `TINCANBAN_RUSTY_BINARY` to the pinned Rusty test binary and add
+`--project=attachments-rusty --project=complete-device-state` for the full group.
+
 ## Components
 
 - [MetaMesh](https://github.com/bobishh/meta-mesh): identity, transport, and replication SDK.
@@ -138,6 +144,22 @@ Identity delivery replaces redundant encrypted snapshots after eight retained
 copies, once every stored state has been verified and merged. The replacement
 preserves signed profile history, recovery evidence, and unknown optional
 components. An incomplete or rejected state prevents replacement.
+
+## Mesh relay settings
+
+Open **Settings → Identity → Mesh relay** to choose the relay policy for this
+browser. By default Mesh uses the public Iroh relays for signaling and peer
+sessions. **Rusty relay only** uses the relay advertised by the selected Rusty
+service. **Specified relay URLs only** uses the HTTPS origins you enter, one per
+line. Save and reload to apply the setting. Peers using custom relays need a
+relay in common. Local boards and Rusty storage reads remain available when the
+chosen relay is unreachable.
+
+An attachment opens from the verified local copy, then from Rusty storage if a
+copy is available, or directly from an authorized peer over WebRTC. A Mesh relay
+session can still synchronize a board when WebRTC is unavailable. In that case,
+an uncached attachment can be opened once it reaches Rusty or a WebRTC peer is
+available.
 
 ## Leave a workspace
 

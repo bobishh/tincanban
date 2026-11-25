@@ -1,7 +1,7 @@
 import { installPairingCodec } from "@meta-uber/mesh-pairing"
 import { installMeshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import type { GossipStateMachine } from "@meta-uber/mesh-replication"
-import type { IrohStream as RawIrohStream } from "@meta-uber/mesh-transport"
+import type { IrohConnection } from "@meta-uber/mesh-transport"
 import { z } from "zod"
 import policyInit, {
   WasmAutomergeSyncEngine,
@@ -48,13 +48,6 @@ export type IrohNode = {
   dialRelay: (remoteEndpoint: string) => Promise<IrohConnection>
   accept: () => Promise<IrohAcceptor>
   close: (reason?: string) => Promise<void>
-}
-
-type IrohConnection = {
-  remoteEndpointId: string
-  openStream: () => Promise<RawIrohStream>
-  acceptStream: () => Promise<RawIrohStream>
-  close: () => Promise<void>
 }
 
 type IrohAcceptor = {

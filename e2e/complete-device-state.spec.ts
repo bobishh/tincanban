@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "./support/coverage"
+import { expect, type Page } from "./support/coverage"
+import { launchRelayBrowser, newRelayContext, relayTest as test } from "./support/irohRelay"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
 import { approveRustyForFixture } from "./support/identityRustyFixture"
@@ -86,8 +87,8 @@ async function connectRusty(page: Page, origin: string) {
 
 test("Given an enrolled device without Rusty, when its peer connects and synchronizes, then it receives private credentials but keeps local progress", async ({ page, playwright, baseURL }) => {
   test.setTimeout(120_000)
-  const browser = await (process.platform === "darwin" ? playwright.webkit : playwright.chromium).launch()
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  const browser = await launchRelayBrowser(process.platform === "darwin" ? playwright.webkit : playwright.chromium)
+  const context = await newRelayContext(browser, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
   const phone = await context.newPage()
   const ingressFailures: string[] = []
   for (const browserPage of [page, phone]) browserPage.on("console", message => {
@@ -165,9 +166,9 @@ test("Given an acknowledged profile photo update, when the source closes and the
   if (requestedPhoneBrowser && requestedPhoneBrowser !== "chromium" && requestedPhoneBrowser !== "webkit") {
     throw new Error("IDENTITY_E2E_PHONE_BROWSER must be chromium or webkit")
   }
-  const mobileBrowser = await (requestedPhoneBrowser === "chromium" ? playwright.chromium : requestedPhoneBrowser === "webkit" ? playwright.webkit :
-    process.platform === "darwin" ? playwright.webkit : playwright.chromium).launch()
-  const context = await mobileBrowser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  const mobileBrowser = await launchRelayBrowser(requestedPhoneBrowser === "chromium" ? playwright.chromium : requestedPhoneBrowser === "webkit" ? playwright.webkit :
+    process.platform === "darwin" ? playwright.webkit : playwright.chromium)
+  const context = await newRelayContext(mobileBrowser, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
   const phone = await context.newPage()
   const phoneConsoleErrors: string[] = []
   const identityRequests: Array<{ method: string; path: string; status?: number }> = []
@@ -285,7 +286,7 @@ test("Given an older recipient receives an owner-signed approval with an unknown
   test.setTimeout(120_000)
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
-  const recipientContext = await browser.newContext()
+  const recipientContext = await newRelayContext(browser)
   const recipient = await recipientContext.newPage()
   try {
     await recipient.goto("/")
@@ -372,7 +373,7 @@ test("Given an older recipient receives an owner-signed approval with an unknown
 
 test("Given another person is invited to the owner's board, when workspace state synchronizes, then owner's private Rusty configuration stays private", async ({ page, browser, baseURL }) => {
   test.setTimeout(120_000)
-  const guestContext = await browser.newContext()
+  const guestContext = await newRelayContext(browser)
   const guest = await guestContext.newPage()
   await page.goto("/")
   await ensureJobSearchWorkspace(page)

@@ -1,4 +1,59 @@
+import { createHash } from "node:crypto"
 import { expect, test, type Page, type Locator } from "./support/coverage"
+
+test("Given relay settings, when saving valid explicit relay addresses, then keep that list after reload", async ({ page }) => {
+  await page.goto("/")
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true })
+  await settings.getByRole("tab", { name: "Identity", exact: true }).click()
+  await settings.getByText("Mesh relay", { exact: true }).click()
+  const form = settings.getByRole("form", { name: "Mesh relay" })
+  await form.getByLabel("Relay mode").selectOption("custom")
+  await form.getByRole("textbox", { name: "Relay URLs", exact: true }).fill("http://private-relay.invalid")
+  await form.getByRole("button", { name: "Save and reload" }).click()
+  await expect(form.getByRole("alert")).toContainText("HTTPS")
+
+  const allowedRelays = "https://relay-one.invalid\nhttps://relay-two.invalid"
+  await form.getByRole("textbox", { name: "Relay URLs", exact: true }).fill(allowedRelays)
+  await Promise.all([page.waitForEvent("domcontentloaded"), form.getByRole("button", { name: "Save and reload" }).click()])
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  await settings.getByRole("tab", { name: "Identity", exact: true }).click()
+  await settings.getByText("Mesh relay", { exact: true }).click()
+  await expect(form.getByLabel("Relay mode")).toHaveValue("custom")
+  await expect(form.getByRole("textbox", { name: "Relay URLs", exact: true })).toHaveValue(allowedRelays)
+})
+
+test("Given Rusty-only relay settings, when Rusty advertises a relay, then save the policy after verifying discovery", async ({ page }) => {
+  const origin = "https://fixture-rusty.invalid"
+  const publicKey = Buffer.alloc(32, 1)
+  const service = { publicKey: publicKey.toString("base64url"), serviceId: createHash("sha256").update(publicKey).digest("base64url") }
+  let relayAvailable = false
+  await page.route(`${origin}/.well-known/mesh-lighthouse`, route => route.fulfill({
+    headers: { "access-control-allow-origin": "*" },
+    json: { protocolVersions: [2], publicOrigin: origin, service, capabilities: {
+      modes: ["blind"], applicationWrites: false, classification: false,
+      ...(relayAvailable ? { irohRelay: { version: 1, url: "https://fixture-iroh.invalid" } } : {}),
+    } },
+  }))
+  await page.goto("/")
+  const open = async () => {
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    const settings = page.getByRole("dialog", { name: "Settings", exact: true })
+    await settings.getByRole("tab", { name: "Identity", exact: true }).click()
+    await settings.getByText("Mesh relay", { exact: true }).click()
+    return settings.getByRole("form", { name: "Mesh relay" })
+  }
+  const form = await open()
+  await form.getByLabel("Relay mode").selectOption("rusty")
+  await form.getByRole("textbox", { name: "Rusty origin" }).fill(origin)
+  await form.getByRole("button", { name: "Save and reload" }).click()
+  await expect(form.getByRole("alert")).toContainText("does not advertise an Iroh relay")
+  relayAvailable = true
+  await Promise.all([page.waitForEvent("domcontentloaded"), form.getByRole("button", { name: "Save and reload" }).click()])
+  const saved = await open()
+  await expect(saved.getByLabel("Relay mode")).toHaveValue("rusty")
+  await expect(saved.getByRole("textbox", { name: "Rusty origin" })).toHaveValue(origin)
+})
 
 test("Given a healthy board, when Workspace settings opens, then it shows saved status without an empty sync warning", async ({ page }) => {
   await page.goto("/")

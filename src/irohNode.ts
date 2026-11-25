@@ -1,5 +1,6 @@
 import type { IrohNode, IrohBrowserNodeOptions } from "./iroh"
 import type { GossipStateMachine } from "@meta-uber/mesh-replication"
+import { browserRelayUrls } from "./browserRelaySettings"
 import { diagnoseStartupStep } from "./sync/startupDiagnostics"
 
 export async function startIrohBrowserNode(secret?: Uint8Array, options: IrohBrowserNodeOptions = {}): Promise<IrohNode> {
@@ -11,7 +12,7 @@ export async function startIrohBrowserNode(secret?: Uint8Array, options: IrohBro
     detail.bytes = wasm.memory.buffer.byteLength
   }, detail)
   setBrowserTransportDebugLogging(options.verboseTransportLogging === true)
-  const node = await diagnoseStartupStep("transport-node", () => BrowserNode.start(secret))
+  const node = await diagnoseStartupStep("transport-node", () => BrowserNode.start(secret, browserRelayUrls()))
   return {
     endpointId: node.endpointId,
     createGossipEngine: () => new WasmGossipEngine(node.endpointId) as GossipStateMachine,

@@ -231,7 +231,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
       endpoint: peer.endpoint.slice(0, 8), mode })
     const connection = networkConnection(await networkIO(this.reconnectPolicy.dial<Awaited<ReturnType<SyncNode["dial"]>>>(node, key, route.endpoint)),
       meshIngressBudgetProfile())
-    this.trace("dial.connected", { connectionId, peerId: peer.deviceId, mode })
+    this.trace("dial.connected", { connectionId, peerId: peer.deviceId, mode, transport: connection.transport })
     return connection
   }
 
@@ -319,7 +319,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
             profile: input.profile, remotePersonId: input.remotePersonId, connection: input.connection, connectionId: input.connectionId,
             secret: credential.transportSecret, blob: this.options.workspaceStore.blob, ensureCurrent: guard }),
           onBlobRequest: input.blobTransferSupported
-            ? (stream, frame) => respondToCurrentBlobRequest({ workspaceId: input.workspaceId, deviceId: input.deviceId,
+            ? (stream, frame) => respondToCurrentBlobRequest({ workspaceId: input.workspaceId, deviceId: input.deviceId, transport: input.connection.transport,
               secret: credential.transportSecret, blob: this.options.workspaceStore.blob, store: this.store, ensureCurrent: guard }, stream, frame)
             : undefined,
         })

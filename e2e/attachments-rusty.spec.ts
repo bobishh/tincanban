@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
-import { expect, test } from "./support/coverage"
+import { newRelayContext, relayTest as test } from "./support/irohRelay"
+import { expect } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
 import { approveRustyForFixture } from "./support/identityRustyFixture"
@@ -10,8 +11,8 @@ import { approveRustyForFixture } from "./support/identityRustyFixture"
  */
 test("Given confirmed Rusty attachment coverage, when the source browser closes, then a fresh same-person device previews and downloads verified bytes", async ({ browser, baseURL, browserName }) => {
   test.setTimeout(browserName === "webkit" ? 240_000 : 120_000)
-  const sourceContext = await browser.newContext()
-  const recipientContext = await browser.newContext({
+  const sourceContext = await newRelayContext(browser)
+  const recipientContext = await newRelayContext(browser, {
     viewport: { width: 390, height: 844 },
     isMobile: true,
     hasTouch: true,

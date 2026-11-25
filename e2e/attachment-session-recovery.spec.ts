@@ -1,6 +1,7 @@
 import { openSettingsFromSync } from "./support/settingsNavigation"
+import { newRelayContext, relayTest as test } from "./support/irohRelay"
 import { readFile } from "node:fs/promises"
-import { expect, test, type Page } from "./support/coverage"
+import { expect, type Page } from "./support/coverage"
 import { createJobSearchWorkspace, ensureJobSearchWorkspace, addJobSearchLead } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
 import { approveRustyForFixture } from "./support/identityRustyFixture"
@@ -60,6 +61,40 @@ async function pairWorkspace(host: Page, guest: Page) {
   if (await hostDialog.isVisible()) await hostDialog.getByRole("button", { name: "Close", exact: true }).first().click()
 }
 
+test("Given a shared board only has an Iroh relay connection, when an editor previews an uncached attachment, then keep board sync available and refuse the file", async ({ page, browser, context }) => {
+  test.setTimeout(90_000)
+  const guestContext = await newRelayContext(browser)
+  try {
+    for (const fixture of [context, guestContext]) {
+      await fixture.addInitScript(() => Object.defineProperty(globalThis, "RTCPeerConnection", { value: undefined }))
+      await fixture.route("**/api/sync-signal**", route => route.fulfill({ status: 404 }))
+    }
+    const guest = await guestContext.newPage()
+    await page.goto("/")
+    await addLead(page, "Relay-only attachment")
+    await page.getByRole("button", { name: "Open Relay-only attachment — Engineer" }).click()
+    const item = page.getByRole("dialog", { name: "Item overview" })
+    await item.getByRole("button", { name: "+ File" }).click()
+    const form = item.getByRole("form", { name: "Attach document" })
+    await form.getByLabel("Title").fill(attachmentTitle)
+    await form.getByLabel("File").setInputFiles({
+      name: attachmentName, mimeType: "text/plain", buffer: Buffer.from("Private attachment fixture"),
+    })
+    await form.getByRole("button", { name: "Attach" }).click()
+    await expect(item.getByRole("group", { name: attachmentTitle })).toBeVisible()
+    await item.getByRole("button", { name: "Close detail", exact: true }).click()
+
+    await pairWorkspace(page, guest)
+    await guest.getByRole("button", { name: "Open Relay-only attachment — Engineer" }).click()
+    await guest.getByRole("group", { name: attachmentTitle }).getByRole("button", { name: "Preview" }).click()
+    await expect(guest.getByRole("dialog", { name: "Document preview" })
+      .getByText("File unavailable from Rusty and connected devices. Retry when a connection is available.")).toBeVisible({ timeout: 20_000 })
+    await expect(guest.getByLabel("Mesh connected")).toBeVisible()
+  } finally {
+    await guestContext.close()
+  }
+})
+
 test("Given a multi-chunk attachment transfer loses its stream, when the recipient reconnects, then preview and download recover without publishing partial bytes", async ({ browser, page }) => {
   test.setTimeout(120_000)
   await page.route("**/api/sync-signal**", route => route.fulfill({ status: 404 }))
@@ -94,7 +129,7 @@ test("Given a multi-chunk attachment transfer loses its stream, when the recipie
   expect(descriptor).toMatchObject({ name: attachmentName, size: fileBytes.byteLength })
   expect(fileBytes.byteLength).toBeGreaterThan(2 * 256 * 1024)
 
-  const guestContext = await browser.newContext({ acceptDownloads: true })
+  const guestContext = await newRelayContext(browser, { acceptDownloads: true })
   await guestContext.route("**/api/sync-signal**", route => route.fulfill({ status: 404 }))
   const guest = await guestContext.newPage()
   await guest.route("**/mesh-blob/src/index.ts*", async route => {
@@ -231,8 +266,8 @@ test("Given a multi-chunk attachment transfer loses its stream, when the recipie
 test("Given an owner with two archived history generations, when adding my phone, then its backup covers both generations and it restores an original version with the owner device closed", async ({ browser, baseURL, browserName }, testInfo) => {
   // Keep each operation's deadline; allow WebKit time for the complete two-generation flow.
   test.setTimeout(browserName === "webkit" ? 360_000 : 210_000)
-  const sourceContext = await browser.newContext({ acceptDownloads: true })
-  const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  const sourceContext = await newRelayContext(browser, { acceptDownloads: true })
+  const phoneContext = await newRelayContext(browser, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
   const source = await sourceContext.newPage()
   const attachBackupProgress = await captureHistoryBackupProgress(source, testInfo)
   const phone = await phoneContext.newPage()
@@ -391,7 +426,7 @@ test("Given an owner with two archived history generations, when adding my phone
 
 test("Given a compacted shared board, when its editor removes it offline, then deliver pending changes from its original history basis before cleaning the hidden copy", async ({ browser, baseURL }) => {
   test.setTimeout(180_000)
-  const ownerContext = await browser.newContext(), editorContext = await browser.newContext()
+  const ownerContext = await newRelayContext(browser), editorContext = await newRelayContext(browser)
   const owner = await ownerContext.newPage(), editor = await editorContext.newPage()
   let rusty: Awaited<ReturnType<typeof startRustyService>> | undefined
   let workspaceId = ""

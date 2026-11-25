@@ -76,6 +76,7 @@ async function fixture() {
   const makeSession = (connectionId: string): SessionEntry => ({
     connectionId, workspaceId, deviceId: "peer-device", instanceId: "slot", endpoint: "",
     remoteIssuedAt: new Date().toISOString(), direction: "incoming", connection: {
+      transport: "webrtc",
       openStream: vi.fn(async () => ({ send: async () => {}, read: async () => Uint8Array.of(1), closeSend: async () => {} })),
       acceptStream: vi.fn(async () => ({ send: async () => {}, read: async () => Uint8Array.of(1), closeSend: async () => {} })),
       close: vi.fn(async () => {}),

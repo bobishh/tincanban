@@ -87,6 +87,10 @@ describe("Iroh persistent node secret support", () => {
     await expect(BrowserNode.start(emptySecret)).rejects.toThrow(/32 bytes/)
   })
 
+  it("Given an empty explicit relay allowlist, when starting the browser node, then refuse instead of using public relays", async () => {
+    await expect(BrowserNode.start(undefined, [])).rejects.toThrow(/allowlist cannot be empty/)
+  })
+
   it("BrowserNode.start directly accepts a 32-byte secret and retains no-arg compatibility", async () => {
     const defaultNode = await BrowserNode.start()
     try {
