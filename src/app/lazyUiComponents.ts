@@ -6,7 +6,7 @@ const pendingStatus = (message: string): Component => ({
 
 export const MeshRelaySettings = defineAsyncComponent<Component>(async () => {
   const [{ default: Settings }, { readBrowserRelaySettings, saveBrowserRelaySettings }] = await Promise.all([
-    import("../components/MeshRelaySettings.vue"), import("../browserRelaySettings"),
+    import("../components/MeshRelaySettings.vue") as Promise<{ default: Component }>, import("../browserRelaySettings"),
   ])
   return { setup: () => () => h(Settings, { read: readBrowserRelaySettings, save: saveBrowserRelaySettings }) }
 })
