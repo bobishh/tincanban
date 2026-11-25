@@ -26,9 +26,10 @@ import { fetchDurableMeshHistoryObject, fetchDurableMeshHistoryBaseline, fetchDu
 import { MeshDialRouteSelector, routeLeaseFields, routedOwnerWorkspaceIds } from "./durableMeshDialRoutes"
 export { isNativeKeeperRoute } from "./nativeKeeperRoute"
 
-function supersededPeerClose(error: unknown): boolean {
+function isCleanConnectionClose(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
-  return /browser connection closed/i.test(message)
+  return /browser connection closed/i.test(message) ||
+    /^failed to accept bidirectional stream: closed(?: by peer: 0)?$/i.test(message)
 }
 
 export class DurableMeshSessions extends DurableMeshHandshake {
@@ -267,13 +268,16 @@ export class DurableMeshSessions extends DurableMeshHandshake {
       this.trace("dial.cancelled", { connectionId, peerId: peer.deviceId })
       throw new MeshDialCancelled()
     }
-    this.recordRouteFailure(key, error)
-    this.trace("dial.failed", { connectionId, peerId: peer.deviceId,
-      reason: error instanceof Error ? error.message : String(error) }, "warn", error)
-    if (!this.hasPeerSession(peer.workspaceId, peer.deviceId, peer.instanceId)) this.reportProtocolFailure(`Dial ${peer.deviceId.slice(0, 6)}`, error)
+    const superseded = this.hasPeerSession(peer.workspaceId, peer.deviceId, peer.instanceId)
+    const reason = error instanceof Error ? error.message : String(error)
+    // The remote can close the losing connection while we read its handshake response.
+    const lostResponse = Boolean(connection) && /^failed to read stream chunk: connection lost$/i.test(reason)
+    if (!superseded) this.recordRouteFailure(key, error, lostResponse)
+    this.trace("dial.failed", { connectionId, peerId: peer.deviceId, reason }, "warn", error)
+    if (!superseded) this.reportProtocolFailure(`Dial ${peer.deviceId.slice(0, 6)}`, error)
     else this.trace("dial.failure.superseded", { connectionId, peerId: peer.deviceId })
     await connection?.close().catch(() => {})
-    if (this.node === node && /runtime node is closed|node is closed/i.test(error instanceof Error ? error.message : String(error))) {
+    if (this.node === node && /runtime node is closed|node is closed/i.test(reason)) {
       this.node = undefined
       await node?.close("Mesh runtime closed").catch(() => {})
     }
@@ -460,17 +464,13 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     return task
   }
 
-  protected recordRouteFailure(key: string, error: unknown): boolean {
+  protected recordRouteFailure(key: string, error: unknown, keepDialMode = false): boolean {
     const networkFailure = isMeshNetworkFailure(error)
-    // This close string is also what a browser sends when it drops the socket.
-    // Retry on the direct path. Forcing relay here leaves enrollment and peers stuck.
-    if (supersededPeerClose(error)) {
-      this.runtime().scheduleReconnect(key, Date.now(), 1_000, 10_000)
-      return true
-    }
-    this.reconnectPolicy.recordFailure(key, networkFailure)
-    this.runtime().scheduleReconnect(key, Date.now(), 1_000, 10_000)
-    return networkFailure
+    const cleanClose = isCleanConnectionClose(error)
+    if (!cleanClose && !keepDialMode) this.reconnectPolicy.recordFailure(key, networkFailure)
+    const retryDelay = cleanClose ? BrowserMeshSessions.SUPERSEDED_CLOSE_GRACE_MS : 1_000
+    this.runtime().scheduleReconnect(key, Date.now(), retryDelay, 10_000)
+    return cleanClose || networkFailure
   }
 
   async views(workspaceId?: string): Promise<MeshPeerView[]> {

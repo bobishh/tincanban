@@ -672,6 +672,38 @@ describe("DurableMesh peer catalog gossip", () => {
     await mesh.dispose()
   })
 
+  it.each([
+    { stage: "transport establishment", action: "read", expected: "relay" },
+    { stage: "handshake response", action: "read", expected: "direct" },
+    { stage: "handshake request", action: "write", expected: "relay" },
+  ])("Given a peer connection is lost during $stage, when retrying, then prefer $expected", async ({ stage, action, expected }) => {
+    const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
+      getProfile: async () => ({} as never),
+      store: { getWorkspaceCredential: async () => ({ workspaceId: "workspace", transportSecret: "secret" }),
+        listPeers: async () => [], listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
+    const internal = meshHooks(mesh) as MeshTestHooks & {
+      openPeerConnection: () => Promise<Partial<SyncConnection>>
+      exchangeOutgoingHandshake: () => Promise<never>
+    }
+    const connection = { close: vi.fn(async () => {}) }
+    const failure = new MeshNetworkError(`failed to ${action} stream chunk: connection lost`)
+    internal.node = {}
+    internal.openPeerConnection = stage === "transport establishment"
+      ? vi.fn().mockRejectedValue(failure) : vi.fn().mockResolvedValue(connection)
+    internal.exchangeOutgoingHandshake = vi.fn().mockRejectedValue(failure)
+    const peer = { workspaceId: "workspace", deviceId: "remote-device", instanceId: "slot-0" }
+    const key = "workspace:remote-device:slot-0"
+    try {
+      await expect(internal.connectPeer(peer, {}, new AbortController().signal, new AbortController().signal)).rejects.toBe(failure)
+      expect(internal.reconnectPolicy.mode({ dialRelay: async () => ({}) }, key)).toBe(expected)
+      expect(internal.runtime().reconnectState(key)?.retryAtMs).toBeGreaterThan(Date.now())
+      expect(connection.close).toHaveBeenCalledTimes(stage === "transport establishment" ? 0 : 1)
+    } finally {
+      internal.node = undefined
+      await mesh.dispose()
+    }
+  })
+
   it("Given an incoming session wins a dial race, when the losing outgoing route fails, then connected UI stays healthy", async () => {
     const onDiagnostic = vi.fn()
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
@@ -1012,10 +1044,15 @@ describe("DurableMesh peer catalog gossip", () => {
     expect(reconnect).not.toBeNull()
     if (!reconnect) throw new Error("Reconnect state was not scheduled")
     expect(reconnect.retryAtMs).toBeGreaterThan(Date.now())
+    expect(internal.reconnectPolicy.mode({ dialRelay: async () => ({}) }, "workspace:remote-device:slot-0")).toBe("relay")
     await mesh.dispose()
   })
 
-  it("Given the peer closed this socket and no replacement arrives, when the session drops, then the direct retry waits out the successor grace", async () => {
+  it.each([
+    "closed by peer: browser connection closed (code 0)",
+    "failed to accept bidirectional stream: closed",
+    "failed to accept bidirectional stream: closed by peer: 0",
+  ])("Given a session ends with %s, when no replacement arrives, then the direct retry waits out the successor grace", async reason => {
     vi.useFakeTimers()
     let rejectReceive!: (error: Error) => void
     const done = new Promise<never>((_resolve, reject) => { rejectReceive = reject })
@@ -1040,14 +1077,14 @@ describe("DurableMesh peer catalog gossip", () => {
       await internal.installSession("workspace", "remote-device", "slot-0", "2026-09-24", 1,
         "outgoing", connection, false, "outgoing-test")
       const closedAt = Date.now()
-      rejectReceive(new MeshNetworkError("closed by peer: browser connection closed (code 0)"))
+      rejectReceive(new MeshNetworkError(reason))
       await vi.advanceTimersByTimeAsync(0)
       expect(internal.sessions.size).toBe(0)
       const reconnect = internal.runtime().reconnectState("workspace:remote-device:slot-0")
       expect(reconnect).not.toBeNull()
       if (!reconnect) throw new Error("Reconnect state was not scheduled")
-      expect(reconnect.retryAtMs).toBeGreaterThanOrEqual(closedAt + 1_500)
       expect(internal.reconnectPolicy.mode({ dialRelay: async () => ({}) }, "workspace:remote-device:slot-0")).toBe("direct")
+      expect(reconnect.retryAtMs).toBeGreaterThanOrEqual(closedAt + 1_500)
     } finally {
       vi.useRealTimers()
       await mesh.dispose()
