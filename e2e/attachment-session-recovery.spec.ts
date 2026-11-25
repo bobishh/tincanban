@@ -196,7 +196,11 @@ test("Given a multi-chunk attachment transfer loses its stream, when the recipie
     await guest.evaluate(() => window.__TINCANBAN_ATTACHMENT_RECOVERY_GATE__?.release())
 
     try {
-      await expect(preview.locator("pre.document-preview-text")).toHaveText(expectedPreview, { timeout: 30_000 })
+      await expect.poll(async () => {
+        const [text] = await preview.locator("pre.document-preview-text").allTextContents()
+        if (text === undefined) return "preview missing"
+        return text === expectedPreview ? "preview matches" : `preview differs (${text.length} of ${expectedPreview.length} characters)`
+      }, { timeout: 30_000 }).toBe("preview matches")
     } catch (error) {
       const failures = await guest.evaluate(() => window.__TINCANBAN_ATTACHMENT_RECOVERY_GATE__?.failures ?? [])
       throw new Error(`Attachment preview failed after reconnect; request failures: ${JSON.stringify(failures)}`, { cause: error })
