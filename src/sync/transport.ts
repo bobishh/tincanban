@@ -14,6 +14,7 @@ export type SyncNode = {
   endpointId: string
   createGossipEngine: () => GossipStateMachine
   dial: (remoteEndpoint: string) => Promise<IrohConnection>
+  dialWebRtc?: (remoteEndpoint: string) => Promise<IrohConnection>
   dialRelay?: (remoteEndpoint: string) => Promise<IrohConnection>
   accept: () => Promise<SyncAcceptor>
   close: (reason?: string) => Promise<void>

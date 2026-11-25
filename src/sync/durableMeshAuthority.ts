@@ -492,6 +492,7 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
 
   private readonly departureDelivery = new WorkspaceDepartureDelivery({
     profile: () => this.options.getProfile(), store: this.store, workspaceStore: this.options.workspaceStore,
+    requestWebRtc: id => this.requestWorkspaceWebRtc(id),
     heads: id => this.readAuthorityHeads(id), notify: () => this.notify(), publish: () => this.publishAll(),
     sessions: () => [...this.sessions.values()].filter(entry => entry.ownershipReceiptSupported && this.departureDeliveryConnections.has(entry.connection)),
     commit: async (credential, departure) => {

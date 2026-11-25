@@ -58,6 +58,7 @@ type BlobFetchInput = {
   blob: BlobCache
   readAuthority(): Promise<BlobAuthoritySnapshot>
   sessions(): SessionEntry[]
+  requestWebRtc?(): Promise<void>
   isCurrent(entry: SessionEntry, runId: number): boolean
   currentRunId(): number
   isRunning(): boolean
@@ -102,13 +103,14 @@ export async function fetchBlobFromCurrentSessions(input: BlobFetchInput): Promi
   assertRuntime(input, runId)
   const originalAuthority = await input.readAuthority()
   let lastError: unknown
+  const findSessions = blobSessionSelection(input)
   while (Date.now() < hardDeadline) {
     // Retries may begin only during the bounded recovery window. A request already
     // started before this point may finish under its own bounded attempt deadline.
     if (Date.now() >= recoveryDeadline) break
     assertRuntime(input, runId)
     const before = await readUnchangedAuthority(input, originalAuthority)
-    const sessions = input.sessions().filter(entry => entry.connection.transport === "webrtc")
+    const sessions = findSessions()
     if (sessions.length === 0) {
       await waitForNextSession()
       continue
@@ -137,6 +139,19 @@ export async function fetchBlobFromCurrentSessions(input: BlobFetchInput): Promi
 
   if (lastError) throw lastError
   throw new Error("No connected peer can provide this file")
+}
+
+function blobSessionSelection(input: BlobFetchInput): () => SessionEntry[] {
+  let requestWebRtc = input.requestWebRtc
+  return () => {
+    const candidates = input.sessions()
+    const direct = candidates.filter(entry => entry.connection.transport === "webrtc")
+    if (direct.length === 0 && candidates.length > 0 && requestWebRtc) {
+      void requestWebRtc().catch(() => {})
+      requestWebRtc = undefined
+    }
+    return direct
+  }
 }
 
 function blobAttemptBudget(size: number): number {

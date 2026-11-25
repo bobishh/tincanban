@@ -9,7 +9,7 @@ import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, 
 import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, defaultProofStore } from "../domain/proofs"
 import { createWorkspaceOwnershipTransfer, verifyWorkspaceGrant } from "./meshRecords"
 import { assertRequiredMeshCapabilities, DurableMesh, isMeshDialNetworkFailure } from "./durableMesh"
-import { isNativeKeeperRoute } from "./durableMeshSessions"
+import { isNativeKeeperRoute } from "./nativeKeeperRoute"
 import { workspaceRecordSigning } from "./meshRecordSigning"
 import { defaultStorage } from "../storage"
 import { isEnvelope, isGrantRevoked } from "./durableMeshBase"

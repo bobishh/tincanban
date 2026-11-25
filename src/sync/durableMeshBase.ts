@@ -301,6 +301,19 @@ export abstract class DurableMeshBase {
     return this.gossip.broadcast(workspaceId)
   }
 
+  protected abstract requestWorkspaceWebRtc(workspaceId: string): Promise<void>
+
+  protected hasPeerSession(workspaceId: string, deviceId: string, instanceId = "legacy", webRtcOnly = false) {
+    return this.runtimeState?.sessions().some(session =>
+      session.key.workspaceId === workspaceId && session.key.deviceId === deviceId && session.key.instanceId === instanceId &&
+      (!webRtcOnly || session.webRtc),
+    ) ?? false
+  }
+
+  protected hasDeviceSession(workspaceId: string, deviceId: string) {
+    return this.runtimeState?.connectedDevices(workspaceId).includes(deviceId) ?? false
+  }
+
   protected async peerInstances(workspaceId?: string) {
     const list = (this.store as PeerStore & { listPeerInstances?: PeerStore["listPeerInstances"] }).listPeerInstances
     const peers = list ? await list.call(this.store, workspaceId) : await (this.store as PeerStore & { listPeers?: PeerStore["listPeers"] }).listPeers?.call(this.store, workspaceId) ?? []

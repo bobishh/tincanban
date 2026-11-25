@@ -17,6 +17,7 @@ export async function startIrohBrowserNode(secret?: Uint8Array, options: IrohBro
     endpointId: node.endpointId,
     createGossipEngine: () => new WasmGossipEngine(node.endpointId) as GossipStateMachine,
     dial: endpoint => node.dial(endpoint) as ReturnType<IrohNode["dial"]>,
+    dialWebRtc: endpoint => node.dialWebRtc(endpoint),
     dialRelay: endpoint => node.dialRelay(endpoint) as ReturnType<IrohNode["dialRelay"]>,
     accept: () => node.accept(),
     close: reason => node.close(reason),

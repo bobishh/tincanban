@@ -45,6 +45,7 @@ export type IrohNode = {
   endpointId: string
   createGossipEngine: () => GossipStateMachine
   dial: (remoteEndpoint: string) => Promise<IrohConnection>
+  dialWebRtc: (remoteEndpoint: string) => Promise<IrohConnection>
   dialRelay: (remoteEndpoint: string) => Promise<IrohConnection>
   accept: () => Promise<IrohAcceptor>
   close: (reason?: string) => Promise<void>

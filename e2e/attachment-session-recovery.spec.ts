@@ -61,12 +61,17 @@ async function pairWorkspace(host: Page, guest: Page) {
   if (await hostDialog.isVisible()) await hostDialog.getByRole("button", { name: "Close", exact: true }).first().click()
 }
 
-test("Given a shared board only has an Iroh relay connection, when an editor previews an uncached attachment, then keep board sync available and refuse the file", async ({ page, browser, context }) => {
+test("Given a shared board uses Iroh relay, when WebRTC becomes available, then preview works and board sync stays available", async ({ page, browser, context }) => {
   test.setTimeout(90_000)
   const guestContext = await newRelayContext(browser)
   try {
     for (const fixture of [context, guestContext]) {
-      await fixture.addInitScript(() => Object.defineProperty(globalThis, "RTCPeerConnection", { value: undefined }))
+      await fixture.addInitScript(() => {
+        const rtc = globalThis.RTCPeerConnection
+        let enabled = false
+        globalThis.addEventListener("fixture-enable-webrtc", () => { enabled = true })
+        Object.defineProperty(globalThis, "RTCPeerConnection", { get: () => enabled ? rtc : undefined })
+      })
       await fixture.route("**/api/sync-signal**", route => route.fulfill({ status: 404 }))
     }
     const guest = await guestContext.newPage()
@@ -90,6 +95,11 @@ test("Given a shared board only has an Iroh relay connection, when an editor pre
     await expect(guest.getByRole("dialog", { name: "Document preview" })
       .getByText("File unavailable from Rusty and connected devices. Retry when a connection is available.")).toBeVisible({ timeout: 20_000 })
     await expect(guest.getByLabel("Mesh connected")).toBeVisible()
+    await Promise.all([page, guest].map(tab => tab.evaluate(() => globalThis.dispatchEvent(new Event("fixture-enable-webrtc")))))
+    const preview = guest.getByRole("dialog", { name: "Document preview" })
+    await preview.getByRole("button", { name: "Close", exact: true }).click()
+    await guest.getByRole("group", { name: attachmentTitle }).getByRole("button", { name: "Preview" }).click()
+    await expect(preview.getByText("Private attachment fixture", { exact: true })).toBeVisible({ timeout: 20_000 })
   } finally {
     await guestContext.close()
   }

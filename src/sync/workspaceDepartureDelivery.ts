@@ -12,7 +12,7 @@ import { meshRecordSigning } from "./meshRecordSigning"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { workspaceSet, type WorkspaceSetStore } from "./workspaceSet"
 import { publishConfirmedToSessions } from "./durableMeshOwnershipScope"
-import { prepareDepartureSnapshot, departureDeliveryTimeout } from "./workspaceDepartureSnapshot"
+import { prepareDepartureSnapshot, departureDeliveryRequirements } from "./workspaceDepartureSnapshot"
 
 type Ports = {
   profile(): Promise<LocalProfile>
@@ -20,6 +20,7 @@ type Ports = {
   workspaceStore: WorkspaceSetStore
   heads(workspaceId: string): Promise<string[]>
   sessions(): SessionEntry[]
+  requestWebRtc(workspaceId: string): Promise<void>
   notify(): Promise<void>
   commit(credential: WorkspaceMeshCredential, departure: WorkspaceDeparture): Promise<void>
   publish(): Promise<void>
@@ -83,8 +84,13 @@ export class WorkspaceDepartureDelivery {
       }
       const snapshot = await prepareDepartureSnapshot(meshRustRuntime().state.encodeWorkspaceSet(entries), pending.departure,
         this.ports.workspaceStore.blob)
-      if (!await publishConfirmedToSessions(sessions, credential.transportSecret, snapshot, "departure delivery unconfirmed",
-        departureDeliveryTimeout(snapshot, pending.workspaceId))) return
+      const { needsFileTransfer, timeoutMs } = departureDeliveryRequirements(snapshot, pending.workspaceId)
+      const targets = needsFileTransfer ? sessions.filter(entry => entry.connection.transport === "webrtc") : sessions
+      if (targets.length === 0) {
+        await this.ports.requestWebRtc(pending.workspaceId)
+        return
+      }
+      if (!await publishConfirmedToSessions(targets, credential.transportSecret, snapshot, "departure delivery unconfirmed", timeoutMs)) return
       await updatePendingWorkspaceDeparture(pending.workspaceId, pending.personId, { delivered: true })
     }
     const current = await this.ports.store.getWorkspaceCredential(pending.workspaceId)

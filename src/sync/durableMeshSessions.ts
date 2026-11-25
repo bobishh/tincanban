@@ -24,7 +24,6 @@ import { createDurablePeerHistoryGuard } from "./durablePeerHistoryGuard"
 import { readDurableMeshTransferAuthority } from "./durableMeshTransferAuthority"
 import { fetchDurableMeshHistoryObject, fetchDurableMeshHistoryBaseline, fetchDurableMeshHistoryDocument } from "./durableMeshHistoryFetch"
 import { MeshDialRouteSelector, routeLeaseFields, routedOwnerWorkspaceIds } from "./durableMeshDialRoutes"
-export { isNativeKeeperRoute } from "./nativeKeeperRoute"
 
 function isCleanConnectionClose(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
@@ -72,14 +71,13 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     trace: (event, detail, level) => this.trace(event, detail, level),
   }, this.handshakeCodec)
 
-  protected hasPeerSession(workspaceId: string, deviceId: string, instanceId = "legacy") {
-    return this.runtimeState?.sessions().some(session =>
-      session.key.workspaceId === workspaceId && session.key.deviceId === deviceId && session.key.instanceId === instanceId,
-    ) ?? false
-  }
-
-  protected hasDeviceSession(workspaceId: string, deviceId: string) {
-    return this.runtimeState?.connectedDevices(workspaceId).includes(deviceId) ?? false
+  protected async requestWorkspaceWebRtc(workspaceId: string): Promise<void> {
+    if (!this.node?.dialWebRtc || this.stopped || this.options.networkOnline?.() === false) return
+    const peers = await this.peerInstances(workspaceId)
+    const targets = peers.filter(peer => this.sessions.get(this.peerKey(workspaceId, peer.deviceId, peer.instanceId))
+      ?.connection.transport === "irohRelay")
+    const signal = AbortSignal.timeout(8_000)
+    await Promise.allSettled(targets.map(peer => this.dialDevice([peer], signal, true)))
   }
 
   protected async dialLoop(signal: AbortSignal) {
@@ -120,14 +118,14 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     return this.lifecycle!.wait(1_000, signal)
   }
 
-  protected async dialDevice(peers: WorkspacePeerRecord[], signal: AbortSignal) {
+  protected async dialDevice(peers: WorkspacePeerRecord[], signal: AbortSignal, webRtcOnly = false) {
     const peer = peers[0]!
     const key = this.peerKey(peer.workspaceId, peer.deviceId, peer.instanceId)
     if (this.runtime().routeAttemptActive(key)) return
     const attempt = this.runtime().beginRouteAttempt(key, Date.now())
     try {
       this.throwIfDialCancelled(signal, signal)
-      if (!this.node || this.hasPeerSession(peer.workspaceId, peer.deviceId, peer.instanceId)) return
+      if (!this.node || this.hasPeerSession(peer.workspaceId, peer.deviceId, peer.instanceId, webRtcOnly)) return
       const routeEntries = await Promise.all(peers.map(async candidate => ({
         peer: candidate,
         route: await adaptVerifiedWorkspaceAdvertisement(
@@ -144,7 +142,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
         signal,
         connect: async (route, routeSignal) => {
           const entry = routeEntries.find(value => value.route.instanceId === route.instanceId)!
-          return this.connectPeer(entry.peer, route, signal, routeSignal)
+          return this.connectPeer(entry.peer, route, signal, routeSignal, webRtcOnly)
         },
       })
       const value = connected.value
@@ -185,7 +183,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     }
   }
 
-  protected async connectPeer(peer: WorkspacePeerRecord, route: DeviceRoute, signal: AbortSignal, routeSignal: AbortSignal) {
+  protected async connectPeer(peer: WorkspacePeerRecord, route: DeviceRoute, signal: AbortSignal, routeSignal: AbortSignal, webRtcOnly = false) {
     const key = this.peerKey(peer.workspaceId, peer.deviceId, peer.instanceId)
     const connectionId = this.connectionId("outgoing")
     const node = this.node
@@ -195,7 +193,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
       this.throwIfDialCancelled(signal, routeSignal, node)
       let credential = await this.requireDialCredential(peer)
       this.throwIfDialCancelled(signal, routeSignal, node)
-      connection = await this.openPeerConnection(peer, route, key, connectionId, node)
+      connection = await this.openPeerConnection(peer, route, key, connectionId, node, webRtcOnly)
       const handshake = await this.exchangeOutgoingHandshake(connection, peer, credential, connectionId)
       if (handshake.response.capabilities.includes("departure-delivery-v1")) this.departureDeliveryConnections.add(connection)
       if (handshake.response.capabilities?.includes("identity-device-preferences-v1")) this.identityPreferenceConnections.add(connection)
@@ -225,12 +223,12 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     return credential
   }
 
-  protected async openPeerConnection(peer: WorkspacePeerRecord, route: DeviceRoute, key: string, connectionId: string, node: SyncNode): Promise<SyncConnection> {
-    const mode = this.reconnectPolicy.mode(node, key)
+  protected async openPeerConnection(peer: WorkspacePeerRecord, route: DeviceRoute, key: string, connectionId: string, node: SyncNode, webRtcOnly = false): Promise<SyncConnection> {
+    const mode = webRtcOnly ? "webrtc" : this.reconnectPolicy.mode(node, key)
     this.trace("dial.started", { connectionId, peerId: peer.deviceId, workspaceId: peer.workspaceId,
       endpoint: peer.endpoint.slice(0, 8), mode })
-    const connection = networkConnection(await networkIO(this.reconnectPolicy.dial<Awaited<ReturnType<SyncNode["dial"]>>>(node, key, route.endpoint)),
-      meshIngressBudgetProfile())
+    const dial = webRtcOnly ? node.dialWebRtc!(route.endpoint) : this.reconnectPolicy.dial(node, key, route.endpoint)
+    const connection = networkConnection(await networkIO(dial), meshIngressBudgetProfile())
     this.trace("dial.connected", { connectionId, peerId: peer.deviceId, mode, transport: connection.transport })
     return connection
   }
@@ -382,6 +380,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
       sessions: () => [...this.sessions.values()].filter(entry => entry.workspaceId === workspaceId && entry.blobTransferSupported),
       isCurrent: (entry, runId) => this.currentRunId === runId && this.sessions.get(this.peerKey(workspaceId, entry.deviceId, entry.instanceId)) === entry,
       currentRunId: () => this.currentRunId, isRunning: () => !this.stopped,
+      requestWebRtc: () => this.requestWorkspaceWebRtc(workspaceId),
     })
   }
 

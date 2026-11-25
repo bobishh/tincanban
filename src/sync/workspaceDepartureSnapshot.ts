@@ -54,8 +54,9 @@ export async function receiveDepartureFiles(snapshot: Uint8Array, workspaceId: s
   }
 }
 
-export function departureDeliveryTimeout(snapshot: Uint8Array, workspaceId: string): number {
+export function departureDeliveryRequirements(snapshot: Uint8Array, workspaceId: string) {
   const entry = meshRustRuntime().state.decodeWorkspaceSet(snapshot, [workspaceId])[0]!
   const delivery = (entry.mesh as { pendingDepartureDelivery: Delivery }).pendingDepartureDelivery
-  return 12_000 + 2_000 * delivery.blobs.reduce((chunks, descriptor) => chunks + Math.ceil(descriptor.size / BLOB_CHUNK_BYTES), 0)
+  const chunks = delivery.blobs.reduce((count, descriptor) => count + Math.ceil(descriptor.size / BLOB_CHUNK_BYTES), 0)
+  return { needsFileTransfer: delivery.blobs.length > 0, timeoutMs: 12_000 + 2_000 * chunks }
 }
