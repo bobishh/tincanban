@@ -15,7 +15,8 @@ import { fromBase64Url } from "./domain/identity"
 import { listPendingWorkspaceDepartures, readPendingWorkspaceDeparture, updatePendingWorkspaceDeparture, completeWorkspaceDeparture } from "./storageWorkspaceDeparture"
 import { forgetWorkspaceInRoot } from "./domain/personalRoot"
 import { PersonalRootMapStore } from "./storagePersonalRoot"
-import { StorageTransactionAccess } from "./storageTransactionAccess"
+import { StorageTransactionAccess, type LoadedWorkspaceDocument } from "./storageTransactionAccess"
+import { createDeltaWorkspaceDocument } from "./workspaceDeltaJournal"
 import {
   activeHistoryDifference,
   persistWorkspaceInIndexedDb,
@@ -284,7 +285,7 @@ export class WorkspaceStorage extends StorageTransactionAccess {
     causalEvidence: StoredCausalEvidence | undefined, previous: StoredWorkspaceSnapshot | undefined,
   ): StoredWorkspaceSnapshot {
     return {
-      id: workspaceId, workspaceId, title: doc.title, archivedAt: doc.archivedAt ?? null,
+      id: workspaceId, workspaceId, title: doc.title, archivedAt: doc.archivedAt ?? null, ownerPersonId: doc.ownerPersonId,
       heads: Automerge.getHeads(doc).sort(), bytes: new Uint8Array(bytes), savedAt: new Date().toISOString(),
       causalEvidence: snapshotCausalEvidence(causalEvidence, previous?.causalEvidence),
       receivedHistory: previous?.receivedHistory ? structuredClone(previous.receivedHistory) : undefined,
@@ -344,7 +345,19 @@ export class WorkspaceStorage extends StorageTransactionAccess {
 
   async loadWorkspaceDoc(
     workspaceId: string, reusable?: Automerge.Doc<WorkspaceDocumentV2>, trace?: StorageReadTrace,
-  ): Promise<{ doc: Automerge.Doc<WorkspaceDocumentV2>; heads: Heads } | null> {
+  ): Promise<LoadedWorkspaceDocument | null> {
+    const admitted = await traceStorageRead(trace, "admitted-snapshot", async () => (await this.delta.journal()).readAdmittedProjection(workspaceId))
+    if (admitted) {
+      const { basis, delta, startupAdmission } = admitted
+      const cached = reusable ?? this.loadedDocuments.get(workspaceId)
+      const doc = canReuseDocument(cached, workspaceId, startupAdmission.heads) ? Automerge.clone(cached!) :
+        delta ? createDeltaWorkspaceDocument(delta) : Automerge.load<WorkspaceDocumentV2>(basis.bytes)
+      if (canReuseDocument(doc, workspaceId, startupAdmission.heads)) {
+        this.rememberDocument(workspaceId, doc)
+        return { doc, heads: startupAdmission.heads, startupAdmission }
+      }
+      Automerge.free(doc)
+    }
     await traceStorageRead(trace, "received-history", () => this.ensureReceivedHistory(workspaceId, trace))
     const incremental = await traceStorageRead(trace, "delta-document", () => this.delta.loadDocument(workspaceId, reusable))
     if (incremental) return incremental
@@ -365,6 +378,20 @@ export class WorkspaceStorage extends StorageTransactionAccess {
     } catch (error) {
       try { Automerge.free(doc) } catch { /* Preserve the read error if the native instance already failed. */ }
       throw error
+    }
+  }
+
+  async readWorkspaceOwner(workspaceId: string): Promise<string | undefined> {
+    const saved = typeof indexedDB === "undefined" ? undefined : await this.readRevisionRecord(workspaceId)
+    if (typeof saved?.projectionOwner === "string" && saved.projectionOwner) return saved.projectionOwner
+    const loaded = await this.loadWorkspaceDoc(workspaceId)
+    if (loaded) {
+      try {
+        const owner = loaded.doc.ownerPersonId
+        if (owner && saved?.revision) await this.rememberRevisionProjection(workspaceId, saved.revision,
+          { projectionOwner: owner }).catch(() => undefined)
+        return owner
+      } finally { Automerge.free(loaded.doc) }
     }
   }
 

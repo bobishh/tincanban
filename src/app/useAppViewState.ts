@@ -44,7 +44,7 @@ export function useAppViewState(app: ReturnType<typeof useAppController>, routeC
     uiReady: computed(() => ready.value && workspaceRoleStatus.value !== "loading"),
     boardVisible: computed(() => { void docVersion.value; return Boolean(getActiveDoc() && activeWorkspace.id) }),
     startupMessage: computed(() => ({
-      starting: "Starting local checks…", reading: "Reading saved board…", updating: "Updating saved board…",
+      starting: "Starting local checks…", reading: "Reading saved board…",
       history: "Checking saved changes…", access: "Checking workspace access…",
     })[startupStage.value]),
   }

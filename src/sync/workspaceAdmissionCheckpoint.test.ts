@@ -1,7 +1,18 @@
-import { expect, it } from "vitest"
+import { expect, it, vi } from "vitest"
 import { admissionInputHash, createAdmissionCheckpoint, matchesAdmissionCheckpoint } from "./workspaceAdmissionCheckpoint"
 import { bindAdmittedBase, retainedAdmissionBase } from "./workspaceAdmissionReuse"
 import type { WorkspaceChangeAuthorization } from "../product-replica"
+
+it("Given identical admission rules, when the frontend build changes, then its saved checkpoint is still current", async () => {
+  const heads = ["head"]
+  const decisions = [{ hash: "head", status: { type: "admitted", role: "owner" } }]
+  try {
+    vi.stubGlobal("__TINCANBAN_BUILD_COMMIT__", "a".repeat(40))
+    const checkpoint = await createAdmissionCheckpoint("input", heads, decisions)
+    vi.stubGlobal("__TINCANBAN_BUILD_COMMIT__", "b".repeat(40))
+    await expect(matchesAdmissionCheckpoint(checkpoint, "input", heads, decisions)).resolves.toBe(true)
+  } finally { vi.unstubAllGlobals() }
+})
 
 it("Given committed admission metadata, When history, rights, proofs, projection, decisions or policy differ, Then the stored result cannot be reused", async () => {
   const bytes = new Uint8Array([1, 2, 3])

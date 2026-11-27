@@ -6,7 +6,7 @@ import { createPersonalRoot, pruneForeignGenesisWorkspaceRefs, registerWorkspace
 import { resolveSigningContext } from "./domain/signingContext"
 import { createIdentityProfileOperation, emptyIdentityProfileState, observeLegacyIdentityProfile } from "./domain/identityProfileState"
 import { rootIdentityProfileState } from "./domain/identityProfileRoot"
-import type { WorkspaceStorage } from "./storage"
+import { WorkspaceStorage } from "./storage"
 import { initializePersonalRootCatalog } from "./statePersonalRoot"
 import { refreshAvailableWorkspaces, resetStateForTest } from "./statePersistence"
 import { stateRuntime } from "./stateContext"
@@ -36,6 +36,7 @@ describe("identity-scoped local workspace catalog", () => {
     const storage = {
       listWorkspaces: async () => [{ id: "owned", title: "Owned" }],
       listArchivedWorkspaces: async () => [{ id: "archived", title: "Archived" }],
+      readWorkspaceOwner: WorkspaceStorage.prototype.readWorkspaceOwner,
       loadWorkspaceDoc: async (id: string) => {
         const doc = Automerge.from(createWorkspaceDoc(id, id, profile.identity.personId, "blank"))
         allocated.push(doc)
@@ -107,7 +108,7 @@ describe("identity-scoped local workspace catalog", () => {
         { id: "stale-anonymous", title: "Anonymous" },
       ]),
       listArchivedWorkspaces: vi.fn().mockResolvedValue([{ id: "archived-owned", title: "Archived" }]),
-      loadWorkspaceDoc: vi.fn(async (id: string) => owners.has(id) ? { doc: Automerge.from({ ownerPersonId: owners.get(id)! }) } : null),
+      readWorkspaceOwner: vi.fn(async (id: string) => owners.get(id)),
       updatePersonalRootForIdentity: vi.fn(async (_personId: string, update: (current: typeof root | null) => Promise<typeof root | null>) => {
         const previous = savedRoot
         const next = await update(previous)
@@ -144,7 +145,7 @@ describe("identity-scoped local workspace catalog", () => {
     const storage = {
       listWorkspaces: vi.fn().mockResolvedValue([{ id: "current-owned", title: "Current" }]),
       listArchivedWorkspaces: vi.fn().mockResolvedValue([]),
-      loadWorkspaceDoc: vi.fn(async () => ({ doc: Automerge.from({ ownerPersonId: profile.identity.personId }) })),
+      readWorkspaceOwner: vi.fn(async () => profile.identity.personId),
       updatePersonalRootForIdentity: vi.fn(async (_personId: string, update: (current: typeof otherRoot | null) => Promise<typeof otherRoot | null>) => update(otherRoot)),
     } as unknown as WorkspaceStorage
 

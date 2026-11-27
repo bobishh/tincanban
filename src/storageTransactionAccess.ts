@@ -10,13 +10,20 @@ import { withWorkspaceMutation } from "./workspaceMutation"
 import type { StoredWorkspaceDelta, WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
 import { isCurrentWorkspaceTransaction, isLiveWorkspaceTransaction, registerWorkspaceTransaction,
   type RegisteredWorkspaceTransaction } from "./storageTransactionClaims"
+import type { WorkspaceStartupAdmission } from "./storageJournalRecords"
+
+export type LoadedWorkspaceDocument = {
+  doc: Automerge.Doc<WorkspaceDocumentV2>
+  heads: Heads
+  startupAdmission?: WorkspaceStartupAdmission & { revision: string }
+}
 
 export interface WorkspaceTransactionContext {
   readonly workspaceId: string
   readonly capturedRevision: string | null
   readonly capturedFrontier: WorkspaceDeltaFrontier | null
   readonly capturedBaselineId: string | null
-  loadWorkspaceDoc(): Promise<{ doc: Automerge.Doc<WorkspaceDocumentV2>; heads: Heads } | null>
+  loadWorkspaceDoc(): Promise<LoadedWorkspaceDocument | null>
   loadCausalEvidence(): Promise<StoredCausalEvidence | null>
   getVerifiedReceivedHistoryBaseline(): ReturnType<StorageTransactionAccess["getVerifiedReceivedHistoryBaseline"]>
   readDeltaFrontier(): ReturnType<StorageTransactionAccess["readDeltaFrontier"]>
@@ -58,7 +65,7 @@ export abstract class StorageTransactionAccess extends StorageHistoryAccess {
   protected abstract assertWorkspaceDataWritable(workspaceId: string): Promise<void>
   protected readonly workspaceLifecycles = new Map<string, number>()
   abstract loadWorkspaceDoc(workspaceId: string, reusable?: Automerge.Doc<WorkspaceDocumentV2>):
-    Promise<{ doc: Automerge.Doc<WorkspaceDocumentV2>; heads: Heads } | null>
+    Promise<LoadedWorkspaceDocument | null>
 
   async withWorkspaceTransaction<T>(workspaceId: string,
     operation: (context: WorkspaceTransactionContext) => Promise<T>): Promise<T> {

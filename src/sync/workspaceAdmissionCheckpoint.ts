@@ -1,5 +1,7 @@
-/* global __TINCANBAN_BUILD_COMMIT__ */
 import { canonicalizeJson, sha256Base64Url } from "../domain/identity"
+
+// Bump when workspace admission rules or the persisted checkpoint interpretation change.
+const WORKSPACE_ADMISSION_POLICY = "workspace-admission-v1"
 
 /** Local commit metadata. Never accept this marker from a peer or import. */
 export type WorkspaceAdmissionCheckpoint = {
@@ -14,7 +16,7 @@ export type WorkspaceAdmissionCheckpoint = {
 }
 
 export function admissionPolicy() {
-  return typeof __TINCANBAN_BUILD_COMMIT__ === "undefined" ? "test" : __TINCANBAN_BUILD_COMMIT__
+  return WORKSPACE_ADMISSION_POLICY
 }
 
 async function jsonHash(value: unknown) {

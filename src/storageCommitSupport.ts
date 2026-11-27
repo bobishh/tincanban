@@ -238,7 +238,7 @@ async function writeWorkspaceCommitTransaction(transaction: IDBTransaction, inpu
   }
   await input.clearDeltaRows(transaction, input.workspaceId)
   await removeIndexedCompactedChanges(transaction, input.workspaceId, input.compactChangeHashes)
-  advanceWorkspaceRevision(transaction, input.workspaceId)
+  advanceWorkspaceRevision(transaction, input.workspaceId, undefined, { projectionOwner: input.snapshot.ownerPersonId })
   await appendWorkspaceCommand(transaction, input.workspaceId, input.snapshot.savedAt, input.command)
   return proofChanged
 }

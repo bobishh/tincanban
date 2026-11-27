@@ -92,6 +92,25 @@ export type LocalJournal = {
   historyProgress?: StoredHistoryProgress
 }
 
+/** Admission of one durable revision. Untrusted snapshots do not supply this record. */
+export type WorkspaceStartupAdmission = {
+  policy: string
+  authorityHash: string
+  heads: string[]
+  projectionHash: string
+  basisHash?: string
+  needsReview: boolean
+}
+
+export type StoredWorkspaceRevision = {
+  id: string
+  workspaceId: string
+  revision: string
+  recoveryId?: string
+  projectionOwner?: string
+  startupAdmission?: WorkspaceStartupAdmission
+}
+
 type CausalChangeDecision = {
   hash: string
   status: { type: "admitted"; role: "owner" | "editor" | "visitor" | "automation" }
@@ -114,6 +133,7 @@ export type StoredWorkspaceSnapshot = {
   id: string
   workspaceId: string
   title: string
+  ownerPersonId?: string
   archivedAt?: string | null
   heads: string[]
   bytes: Uint8Array
@@ -196,12 +216,14 @@ export function writeLocalJournal(workspaceId: string, journal: LocalJournal): v
 }
 
 /** Advance CAS freshness while retaining the last recovery activation until replacement or deletion. */
-export function advanceWorkspaceRevision(transaction: IDBTransaction, workspaceId: string, revision: string = crypto.randomUUID()) {
+export function advanceWorkspaceRevision(transaction: IDBTransaction, workspaceId: string, revision: string = crypto.randomUUID(),
+  projection: Pick<StoredWorkspaceRevision, "projectionOwner" | "startupAdmission"> = {}) {
   const store = transaction.objectStore("revisions")
   const request = store.get(workspaceId) as IDBRequest<{ recoveryId?: string } | undefined>
   request.onsuccess = () => {
     const recoveryId = request.result?.recoveryId
-    store.put({ id: workspaceId, workspaceId, revision, ...(recoveryId ? { recoveryId } : {}) })
+    store.put({ id: workspaceId, workspaceId, revision, ...(recoveryId ? { recoveryId } : {}),
+      ...projection })
   }
 }
 

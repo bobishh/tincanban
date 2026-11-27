@@ -4,7 +4,7 @@ import { stateRuntime } from "../stateContext"
 import { defaultStorage } from "../storage"
 import { discoverBlindKeeper } from "./blindClient"
 import type { BlindReplicaConfig, BlindReplicaStore } from "./blindReplication"
-import { assertWorkspaceWritesAllowed } from "../stateCausalAdmission"
+import { assertWorkspaceWritesAllowed } from "../stateWorkspaceWriteGuard"
 import { readReplicaWriterUpgrade } from "./privateReplicaRepository"
 
 /** Fail closed: presentation/dismissal never turns quarantined raw history into safe retention deletion. */

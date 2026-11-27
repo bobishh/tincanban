@@ -15,7 +15,7 @@ type ActiveWorkspaceMeta = {
 export type StateRuntime = {
   workspace: Workspace;
   ready: { value: boolean };
-  startupStage: Ref<"starting" | "reading" | "updating" | "history" | "access">;
+  startupStage: Ref<"starting" | "reading" | "history" | "access">;
   saveState: Ref<"idle" | "saving" | "saved" | "error">;
   docVersion: Ref<number>;
   workspaceSelectionVersion: number;

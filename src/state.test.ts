@@ -1,7 +1,7 @@
 import { createLeadFixture } from "./test/leadFixture"
 import "fake-indexeddb/auto"
 import { hasEntityKind } from "./domain/model"
-import { readWorkspaceBasisSnapshot } from "./storageJournal"
+import { openWorkspaceJournal, readWorkspaceBasisSnapshot, transactionDone } from "./storageJournal"
 import { defaultStorage, type WorkspaceTransactionContext } from "./storage"
 import { readFile } from "node:fs/promises"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
@@ -101,11 +101,19 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     await app.executeCommandAsync({ kind: "renameWorkspace", title: "Before revocation" })
     const doc = app.getActiveDoc()!, profile = app.getCurrentProfile()!
     expect(await defaultStorage.readDeltaFrontier(doc.id)).toBeDefined()
+    const checked = await causalAdmission.reclassifyStoredWorkspace(doc.id)
+    if (checked.doc) Automerge.free(checked.doc)
+    const admitted = (await defaultStorage.loadWorkspaceDoc(doc.id))!
+    try { expect(admitted.startupAdmission).toBeDefined() }
+    finally { Automerge.free(admitted.doc) }
     const authority = (await peerStore.getWorkspaceAuthority(doc.id))!
     const removal = await createWorkspaceDeviceRevocation(profile, doc.id, profile.identity.personId,
       profile.device.deviceId, Automerge.getHeads(doc), [profile.certificate])
     await peerStore.putWorkspaceAuthority({ ...authority, updatedAt: new Date().toISOString(),
       catalog: { ...authority.catalog as object, deviceRevocations: [removal] } })
+    const reclassified = await causalAdmission.reclassifyStoredWorkspace(doc.id)
+    try { expect(reclassified.doc?.title).toBe("Before revocation") }
+    finally { if (reclassified.doc) Automerge.free(reclassified.doc) }
     await expect(app.executeCommandAsync({ kind: "renameWorkspace", title: "Forbidden edit" })).rejects.toThrow("Visitors can only view this workspace")
     expect(app.saveState.value).toBe("error")
     const loaded = (await new WorkspaceStorage().loadWorkspaceDoc(doc.id))!
@@ -198,7 +206,9 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
   it("Given an atomically admitted saved board, When startup reads unchanged history and authority, Then it reuses the saved projection without replay or workspace writes", async () => {
     const app = useTincanban()
     await createLeadFixture(app, { company: "Admitted once", role: "Engineer", status: "lead" })
+    await causalAdmission.reclassifyStoredWorkspace(app.activeWorkspace.id)
     const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
+    const proofCheck = vi.spyOn(changeAuthorization, "storedWorkspaceAdmissionIsCurrent")
     const savedSnapshot = await readWorkspaceBasisSnapshot(app.activeWorkspace.id)
     resetStateForTest()
     try {
@@ -206,8 +216,47 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       expect(app.ready.value).toBe(true)
       expect(app.workspace.items.map(item => item.title.split(" — ")[0])).toContain("Admitted once")
       expect(admission).not.toHaveBeenCalled()
+      expect(proofCheck).not.toHaveBeenCalled()
       expect(await readWorkspaceBasisSnapshot(app.activeWorkspace.id)).toEqual(savedSnapshot)
-    } finally { admission.mockRestore() }
+    } finally { admission.mockRestore(); proofCheck.mockRestore() }
+  })
+
+  it("Given a saved startup checkpoint, when its basis bytes are damaged, then the checkpoint cannot admit the projection", async () => {
+    const id = useTincanban().activeWorkspace.id
+    const checked = await causalAdmission.reclassifyStoredWorkspace(id)
+    if (checked.doc) Automerge.free(checked.doc)
+    const basis = (await readWorkspaceBasisSnapshot(id))!
+    const admitted = (await defaultStorage.loadWorkspaceDoc(id))!
+    try { expect(admitted.startupAdmission).toBeDefined() }
+    finally { Automerge.free(admitted.doc) }
+
+    const write = (await openWorkspaceJournal()).transaction("snapshots", "readwrite")
+    const done = transactionDone(write)
+    write.objectStore("snapshots").put({ ...basis, bytes: Uint8Array.of(0) })
+    await done
+    try {
+      const journal = (await import("./workspaceDeltaJournal")).WorkspaceDeltaJournal
+      await expect(new journal(await openWorkspaceJournal()).readAdmittedProjection(id)).resolves.toBeUndefined()
+    } finally {
+      const restore = (await openWorkspaceJournal()).transaction("snapshots", "readwrite")
+      const restored = transactionDone(restore)
+      restore.objectStore("snapshots").put(basis)
+      await restored
+    }
+  })
+
+  it("Given several saved boards, when reopening the selected board, then read its document without opening the others", async () => {
+    const app = useTincanban()
+    const selected = app.activeWorkspace.id
+    const other = await app.createWorkspaceAsync("Other saved board", "blank")
+    await app.switchWorkspace(selected)
+    resetStateForTest()
+    const load = vi.spyOn(defaultStorage, "loadWorkspaceDoc")
+    try {
+      await hydrate()
+      expect(app.activeWorkspace.id).toBe(selected)
+      expect(load.mock.calls.some(([id]) => id === other.id)).toBe(false)
+    } finally { load.mockRestore() }
   })
 
   it("Given admitted history and unchanged rights, When archiving then restoring a card, Then only the local commands are checked and both durable checkpoints survive reload", async () => {
@@ -397,7 +446,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     } finally { release(); await earlier; transaction.mockRestore() }
   })
 
-  it("Given a format 2 owner board, when tincanban starts, then migration is signed and durable", async () => {
+  it("Given a format 2 owner board, when its owner opens it, then migration is signed and durable", async () => {
     const profile = useTincanban().getCurrentProfile()!
     type LegacyEntityFixture = {
       id: string
@@ -428,6 +477,8 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     await persistWorkspaceForTest(old.id, source as never, Automerge.save(source), [])
     resetStateForTest()
     await hydrate()
+    expect((await readWorkspaceBasisSnapshot(old.id))?.heads).toEqual(Automerge.getHeads(source))
+    await useTincanban().switchWorkspace(old.id)
     const stored = (await defaultStorage.loadWorkspaceDoc(old.id))!.doc
     const hashes = Automerge.getAllChanges(stored).map(change => Automerge.decodeChange(change).hash)
     const signed = (await exportAuthorizations(Automerge.save(stored))).flatMap(record => record.signed.payload.hashes)

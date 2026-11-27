@@ -5,7 +5,7 @@ import type { WorkspaceRole } from "./domain/permissions"
 import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./product-replica/workspaceAuthorizationRecords"
 import type { WorkspaceDocumentV2 } from "./domain/model"
 import { advanceWorkspaceRevision, advanceHistoryProgress, advanceLocalHistoryProgress, readLocalJournalReference, updateLocalJournal, requestResult, transactionDone,
-  type StoredHistoryProgress, type StoredReceiptRecord, type StoredWorkspaceSnapshot } from "./storageJournalRecords"
+  type StoredHistoryProgress, type StoredReceiptRecord, type StoredWorkspaceRevision, type StoredWorkspaceSnapshot } from "./storageJournalRecords"
 import { readDeltaTail } from "./workspaceDeltaTail"
 
 export type WorkspaceDeltaCommand = {
@@ -175,7 +175,7 @@ export class WorkspaceDeltaJournal {
       const frontiers = transaction.objectStore("frontiers")
       const current = await requestResult(frontiers.get(expected.workspaceId)) as WorkspaceDeltaFrontier | undefined
       const snapshot = await requestResult(transaction.objectStore("snapshots").get(expected.workspaceId)) as StoredWorkspaceSnapshot | undefined
-      const revision = await requestResult(transaction.objectStore("revisions").get(expected.workspaceId)) as { revision: string } | undefined
+      const revision = await requestResult(transaction.objectStore("revisions").get(expected.workspaceId)) as StoredWorkspaceRevision | undefined
       const progress = await requestResult(transaction.objectStore("historyProgress").get(expected.workspaceId)) as StoredHistoryProgress | undefined
       const deltas = transaction.objectStore("deltas")
       const receipts = transaction.objectStore("receipts")
@@ -197,7 +197,11 @@ export class WorkspaceDeltaJournal {
         changeHash: receipt.changeHash, bytes: new Uint8Array(changeBytes), addedAt: delta.savedAt })
       transaction.objectStore("proofs").put({ id: changeKey, workspaceId: expected.workspaceId, changeHash: receipt.changeHash, proof })
       receipts.add({ id: receiptKey, workspaceId: expected.workspaceId, transactionId: receipt.transactionId, receipt })
-      advanceWorkspaceRevision(transaction, expected.workspaceId)
+      const admission = currentStartupAdmission(revision, expected)
+      const nextAdmission = admission && admission.basisHash === expected.basisHash
+        ? { ...admission, heads: next.heads } : undefined
+      advanceWorkspaceRevision(transaction, expected.workspaceId, undefined,
+        { projectionOwner: revision?.projectionOwner, startupAdmission: nextAdmission })
     } catch (error) {
       transaction.abort()
       await done.catch(() => undefined)
@@ -239,14 +243,17 @@ export class WorkspaceDeltaJournal {
       requestResult(transaction.objectStore("snapshots").get(basis.workspaceId)) as Promise<StoredWorkspaceSnapshot | undefined>,
       requestResult(transaction.objectStore("authorizations").get(basis.workspaceId)) as Promise<{ records: unknown[] } | undefined>,
       requestResult(transaction.objectStore("frontiers").get(basis.workspaceId)) as Promise<WorkspaceDeltaFrontier | undefined>,
-      requestResult(transaction.objectStore("revisions").get(basis.workspaceId)) as Promise<{ revision: string } | undefined>,
+      requestResult(transaction.objectStore("revisions").get(basis.workspaceId)) as Promise<StoredWorkspaceRevision | undefined>,
     ])
     const installed = !current && (revision?.revision ?? null) === expectedRevision &&
       sameBasis(snapshot, basis) && canonicalizeJson(proofs?.records ?? []) === canonicalizeJson(authorizations)
     ensureCurrent()
     if (installed) {
       transaction.objectStore("frontiers").put(frontier)
-      advanceWorkspaceRevision(transaction, basis.workspaceId, nextRevision)
+      const admission = currentStartupAdmission(revision, frontier)
+      const nextAdmission = admission ? { ...admission, basisHash: frontier.basisHash } : undefined
+      advanceWorkspaceRevision(transaction, basis.workspaceId, nextRevision,
+        { projectionOwner: revision?.projectionOwner, startupAdmission: nextAdmission })
     }
     await done
     return installed
@@ -259,15 +266,27 @@ export class WorkspaceDeltaJournal {
     if (!basis || frontier.basisSavedAt !== basis.savedAt || !sameHeads(frontier.basisHeads, basis.heads) ||
       frontier.policy !== basis.causalEvidence?.admissionCheckpoint?.policy ||
       frontier.basisHash !== await basisHash(basis)) throw new Error("Delta basis no longer matches its frontier")
-    let checked: WorkspaceDeltaFrontier = { ...frontier, revision: 0, heads: [...basis.heads].sort(), chainHash: await basisChainHash(frontier),
-      title: basis.title, archivedAt: basis.archivedAt ?? null, savedAt: basis.savedAt }
-    const deltas = saved.filter(delta => delta.generation === frontier.generation).sort((a, b) => a.sequence - b.sequence)
-    for (const delta of deltas) {
-      await verifyDelta(checked, delta)
-      checked = nextFrontier(checked, delta)
-    }
-    if (canonicalizeJson(checked) !== canonicalizeJson(frontier)) throw new Error("Delta chain does not reach the saved frontier")
-    return { basis, frontier, deltas }
+    return { basis, frontier, deltas: await verifySavedTail(basis, frontier, saved) }
+  }
+
+  /** Read the exact locally admitted projection without hashing historical authorization evidence. */
+  async readAdmittedProjection(workspaceId: string) {
+    if (!this.database) return
+    const transaction = this.database.transaction(["revisions", "snapshots", "frontiers", "deltas"], "readonly")
+    const done = transactionDone(transaction)
+    const revision = await requestResult(transaction.objectStore("revisions").get(workspaceId)) as StoredWorkspaceRevision | undefined
+    if (!revision?.startupAdmission) { await done; return }
+    const [basis, frontier] = await Promise.all([
+      requestResult(transaction.objectStore("snapshots").get(workspaceId)) as Promise<StoredWorkspaceSnapshot | undefined>,
+      requestResult(transaction.objectStore("frontiers").get(workspaceId)) as Promise<WorkspaceDeltaFrontier | undefined>,
+    ])
+    const admission = revision.startupAdmission
+    if (!basis || basis.receivedHistory || !startupProjectionMatches(basis, frontier, revision)) { await done; return }
+    const saved = frontier ? await readSavedDeltas(transaction, frontier) : []
+    await done
+    if (admission.projectionHash !== await sha256Base64Url(basis.bytes)) return
+    return { basis, startupAdmission: { ...admission, revision: revision.revision },
+      delta: frontier ? { basis, frontier, deltas: await verifySavedTail(basis, frontier, saved) } : undefined }
   }
 
   private async readSaved(workspaceId: string) {
@@ -283,14 +302,43 @@ export class WorkspaceDeltaJournal {
       requestResult(transaction.objectStore("snapshots").get(workspaceId)) as Promise<StoredWorkspaceSnapshot | undefined>,
       requestResult(transaction.objectStore("frontiers").get(workspaceId)) as Promise<WorkspaceDeltaFrontier | undefined>,
     ])
-    const saved = frontier
-      ? await requestResult(transaction.objectStore("deltas").index("sequence").getAll(
-          IDBKeyRange.bound([workspaceId, frontier.generation, 0], [workspaceId, frontier.generation, frontier.revision]),
-        )) as StoredWorkspaceDelta[]
-      : []
+    const saved = frontier ? await readSavedDeltas(transaction, frontier) : []
     await done
     return { basis, frontier, saved }
   }
+}
+
+function currentStartupAdmission(revision: StoredWorkspaceRevision | undefined, frontier: WorkspaceDeltaFrontier) {
+  const admission = revision?.startupAdmission
+  if (admission?.policy === frontier.policy && Array.isArray(admission.heads) && sameHeads(admission.heads, frontier.heads)) return admission
+}
+
+function startupProjectionMatches(basis: StoredWorkspaceSnapshot, frontier: WorkspaceDeltaFrontier | undefined, revision: StoredWorkspaceRevision) {
+  if (!frontier) {
+    const heads = revision.startupAdmission?.heads
+    return Array.isArray(heads) && sameHeads(heads, basis.heads)
+  }
+  const admission = currentStartupAdmission(revision, frontier)
+  return !frontier.invalidated && admission?.basisHash === frontier.basisHash &&
+    frontier.basisSavedAt === basis.savedAt && sameHeads(frontier.basisHeads, basis.heads)
+}
+
+function readSavedDeltas(transaction: IDBTransaction, frontier: WorkspaceDeltaFrontier): Promise<StoredWorkspaceDelta[]> {
+  const { workspaceId, generation, revision } = frontier
+  return requestResult(transaction.objectStore("deltas").index("sequence")
+    .getAll(IDBKeyRange.bound([workspaceId, generation, 0], [workspaceId, generation, revision])) as IDBRequest<StoredWorkspaceDelta[]>)
+}
+
+async function verifySavedTail(basis: StoredWorkspaceSnapshot, frontier: WorkspaceDeltaFrontier, saved: StoredWorkspaceDelta[]) {
+  let checked: WorkspaceDeltaFrontier = { ...frontier, revision: 0, heads: [...basis.heads].sort(), chainHash: await basisChainHash(frontier),
+    title: basis.title, archivedAt: basis.archivedAt ?? null, savedAt: basis.savedAt }
+  const deltas = saved.filter(delta => delta.generation === frontier.generation).sort((a, b) => a.sequence - b.sequence)
+  for (const delta of deltas) {
+    await verifyDelta(checked, delta)
+    checked = nextFrontier(checked, delta)
+  }
+  if (canonicalizeJson(checked) !== canonicalizeJson(frontier)) throw new Error("Delta chain does not reach the saved frontier")
+  return deltas
 }
 
 async function returnExistingAppend(

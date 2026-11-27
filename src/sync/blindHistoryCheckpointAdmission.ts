@@ -10,7 +10,7 @@ import { workspaceRole } from "./changeAuthorization"
 import { prepareBlindCheckpoint, type BlindCheckpointRequest } from "./blindCheckpoint"
 import type { BlindReplicaConfig } from "./blindReplication"
 import { stateRuntime } from "../stateContext"
-import { assertWorkspaceWritesAllowed } from "../stateCausalAdmission"
+import { assertWorkspaceWritesAllowed } from "../stateWorkspaceWriteGuard"
 
 /** Distinct from raw-history pruning: a Native-verified covered compact candidate replaces storage before local activation. */
 export async function prepareHistoryBasisCheckpoint(tincanban: ReturnType<typeof useTincanban>, config: BlindReplicaConfig,

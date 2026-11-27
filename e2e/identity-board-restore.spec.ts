@@ -96,7 +96,7 @@ test(`Given remotely saved boards and the source device closed${coldProfile ? " 
     await page.route("**/src/statePersistence.ts", async route => {
       const response = await route.fetch()
       const original = await response.text()
-      const marker = 'await step("workspace-migrations"'
+      const marker = 'const reclassified = await diagnoseStartupOperation("history-reclassification"'
       if (!original.includes(marker)) throw new Error("Startup acceptance gate marker is missing")
       const gate = 'if (window.location.pathname === "/identity/return") await new Promise(resolve => { window.__releaseIdentityStartup = resolve }); '
       const headers = response.headers()

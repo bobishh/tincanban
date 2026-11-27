@@ -8,7 +8,6 @@ import {
 } from "./domain/identity";
 import { initializePersonalRootCatalog, registerWorkspaceInCurrentRoot } from "./statePersonalRoot";
 import { createWorkspaceDoc } from "./domain/seeds";
-import { migrateOwnedWorkspaces } from "./stateStartupMigration";
 import { type Board, type WorkspaceDocumentV2 } from "./domain/model";
 import type { Command } from "./domain/commands";
 import { recordGenesisAuthority } from "./sync/changeAuthorization";
@@ -23,7 +22,8 @@ import { stateRuntime } from "./stateContext";
 import { readLocal, writeLocal } from "./localDb";
 import { loadReviewAction, refreshCausalReview } from "./stateCausalReviewLoader";
 import type { CausalReviewCallbacks } from "./stateCausalReviewLoader";
-import { assertWorkspaceWritesAllowed, reclassifyStoredWorkspace } from "./stateCausalAdmission";
+import { reclassifyStoredWorkspace } from "./stateCausalAdmission";
+import { assertWorkspaceWritesAllowed } from "./stateWorkspaceWriteGuard";
 import { applyInjectedFixture } from "./stateInjectedFixture";
 import { clearPendingItemMoves } from "./pendingItemMoves";
 import { startPendingWrite } from "./statePendingWrites";
@@ -31,7 +31,6 @@ import { diagnoseStartupStep, diagnoseStartupOperation } from "./sync/startupDia
 import type { Context } from "@opentelemetry/api";
 import { prepareLocalDeltaAdmission } from "./stateDeltaAdmission";
 import { requestWebLock } from "./webLock"
-import { commitAuthorizedCommand, persistNewLocalChange } from "./stateLocalChangePersistence";
 
 type ReadinessWaiter = {
   resolve: () => void;
@@ -130,9 +129,6 @@ export async function hydratePreparedState(storage = defaultStorage, diagnosticC
     // Publish only the saved projection, never the separate raw causal history.
     // Readiness stays false until local history checks finish.
     if (validateWorkspaceDoc(doc).ok) await step("workspace-preview", () => updateReactiveState(doc), { workspaceId: doc.id });
-    stateRuntime.startupStage.value = "updating";
-    await step("workspace-migrations", () => migrateOwnedWorkspaces(storage, profile,
-      source => persistAuthorizedCommand(source, { kind: "migrateWorkspaceFormat" }, profile, storage)));
     stateRuntime.startupStage.value = "history";
     const reclassified = await diagnoseStartupOperation("history-reclassification", parent => reclassifyStoredWorkspace(doc.id, storage, parent), { workspaceId: doc.id, operationCount: Automerge.stats(doc).numOps }, diagnosticContext);
     doc = reclassified.doc ?? (await storage.loadWorkspaceDoc(doc.id))?.doc ?? doc;
@@ -197,6 +193,7 @@ export async function persistAuthorizedCommand(
   profile: LocalProfile,
   storage: WorkspaceStorage,
 ): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
+  const { commitAuthorizedCommand } = await import("./stateLocalChangePersistence");
   await prepareLocalDeltaAdmission(doc.id, storage, profile)
   return storage.withWorkspaceTransaction(doc.id, async transaction => {
     const stored = (await transaction.loadWorkspaceDoc())?.doc;
@@ -213,8 +210,9 @@ export async function persistAuthorizedCommand(
 }
 
 export async function reviewCausalChange(changeHash: string, storage = defaultStorage): Promise<void> {
-  const callbacks: CausalReviewCallbacks = { latestWorkspaceDocument, persistNewLocalChange, updateReactiveState, notifyLocalChanges };
   await assertWorkspaceWritesAllowed(stateRuntime.activeDoc?.id)
+  const { persistNewLocalChange } = await import("./stateLocalChangePersistence");
+  const callbacks: CausalReviewCallbacks = { latestWorkspaceDocument, persistNewLocalChange, updateReactiveState, notifyLocalChanges };
   await (await requireReviewAction()).reviewCausalChange(changeHash, storage, callbacks)
 }
 
@@ -405,6 +403,7 @@ async function persistCommand(
   profile: LocalProfile,
   storage: WorkspaceStorage,
 ): Promise<void> {
+  const { commitAuthorizedCommand } = await import("./stateLocalChangePersistence");
   await prepareLocalDeltaAdmission(workspaceId, storage, profile)
   await storage.withWorkspaceTransaction(workspaceId, async transaction => {
     const borrowed = stateRuntime.activeDoc?.id === workspaceId ? stateRuntime.activeDoc : null;

@@ -17,11 +17,8 @@ export async function initializePersonalRootCatalog(storage: WorkspaceStorage, p
   const workspaces = [...await storage.listWorkspaces(), ...await storage.listArchivedWorkspaces()]
   const ownerById = new Map<string, string>()
   for (const workspace of workspaces) {
-    const loaded = await storage.loadWorkspaceDoc(workspace.id)
-    if (loaded) {
-      try { ownerById.set(workspace.id, loaded.doc.ownerPersonId) }
-      finally { free(loaded.doc) }
-    }
+    const owner = await storage.readWorkspaceOwner(workspace.id)
+    if (owner) ownerById.set(workspace.id, owner)
   }
   const certificate = new TextEncoder().encode(JSON.stringify(profile.certificate))
   const initialRoot = createPersonalRoot(profile, await sha256Base64Url(certificate))

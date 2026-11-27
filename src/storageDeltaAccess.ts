@@ -6,7 +6,9 @@ import type { StoredWorkspaceDelta, WorkspaceDeltaFrontier } from "./workspaceDe
 import { openWorkspaceJournal, readWorkspaceSnapshot, readWorkspaceBasisSnapshot, readLocalJournalReference, updateLocalJournal, writeLocalJournal,
   requestResult, transactionDone, type StoredWorkspaceSnapshot, type StoredCausalEvidence, type StoredChange, type StoredHistoryProgress } from "./storageJournal"
 import { cloneCausalEvidence, extendRawEvidence } from "./causalEvidence"
-import { advanceWorkspaceRevision, HISTORY_ACTIVE_BYTE_LIMIT, HISTORY_ACTIVE_CHANGE_LIMIT } from "./storageJournalRecords"
+import { sha256Base64Url } from "./domain/identityCrypto"
+import { advanceWorkspaceRevision, HISTORY_ACTIVE_BYTE_LIMIT, HISTORY_ACTIVE_CHANGE_LIMIT,
+  type StoredWorkspaceRevision, type WorkspaceStartupAdmission } from "./storageJournalRecords"
 
 function validBaselineId(value: unknown) { return value === null || typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value) }
 function validProgressTransition(value: StoredHistoryProgress) {
@@ -44,12 +46,39 @@ export abstract class StorageDeltaAccess {
   async readDeltaWorkspace(workspaceId: string) { return this.delta.read(workspaceId) }
   async readWorkspaceRevision(workspaceId: string): Promise<string | undefined> {
     if (typeof indexedDB === "undefined") return readLocalJournalReference(workspaceId).revision
+    return (await this.readRevisionRecord(workspaceId))?.revision
+  }
+
+  protected async readRevisionRecord(workspaceId: string) {
     const transaction = (await openWorkspaceJournal()).transaction("revisions", "readonly")
     const done = transactionDone(transaction)
-    const row = await requestResult(transaction.objectStore("revisions").get(workspaceId)) as { revision: string } | undefined
+    const row = await requestResult(transaction.objectStore("revisions").get(workspaceId)) as StoredWorkspaceRevision | undefined
     await done
-    return row?.revision
+    return row
   }
+
+  /** Saves work already verified under the workspace lock. Only validated delta writes carry it forward. */
+  async rememberStartupAdmission(workspaceId: string, revision: string,
+    admission: Pick<WorkspaceStartupAdmission, "policy" | "authorityHash" | "heads" | "needsReview">): Promise<void> {
+    if (typeof indexedDB === "undefined") return
+    const [snapshot, frontier] = await Promise.all([readWorkspaceBasisSnapshot(workspaceId), this.delta.frontier(workspaceId)])
+    if (!snapshot || snapshot.receivedHistory || frontier?.invalidated) return
+    const startupAdmission: WorkspaceStartupAdmission = { ...admission, projectionHash: await sha256Base64Url(snapshot.bytes),
+      ...(frontier && frontier.heads.join() === admission.heads.join()
+        ? { basisHash: frontier.basisHash } : {}) }
+    await this.rememberRevisionProjection(workspaceId, revision, { startupAdmission })
+  }
+
+  protected async rememberRevisionProjection(workspaceId: string, revision: string,
+    projection: Pick<StoredWorkspaceRevision, "projectionOwner" | "startupAdmission">): Promise<void> {
+    const transaction = (await openWorkspaceJournal()).transaction("revisions", "readwrite")
+    const done = transactionDone(transaction)
+    const store = transaction.objectStore("revisions")
+    const row = await requestResult(store.get(workspaceId)) as StoredWorkspaceRevision | undefined
+    if (row?.revision === revision) store.put({ ...row, ...projection })
+    await done
+  }
+
   /** Capture the baseline without materializing a frontier that may need repair. */
   protected async readWorkspaceBaselineId(workspaceId: string): Promise<string | null> {
     const progress = await this.readHistoryProgressRow(workspaceId)
@@ -260,6 +289,10 @@ export abstract class StorageDeltaAccess {
   async hasUnresolvedCausalChanges(workspaceId: string) {
     const frontier = await this.delta.frontier(workspaceId)
     if (frontier && !frontier.invalidated) return false
+    if (typeof indexedDB !== "undefined") {
+      const result = (await this.readRevisionRecord(workspaceId))?.startupAdmission?.needsReview
+      if (typeof result === "boolean") return result
+    }
     return Boolean((await this.loadCausalEvidence(workspaceId))?.decisions.some(decision => decision.status.type !== "admitted"))
   }
 

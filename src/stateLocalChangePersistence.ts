@@ -12,7 +12,7 @@ import {
 } from "./sync/changeAuthorization"
 import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import type { WorkspaceStorage, WorkspaceTransactionContext } from "./storage"
-import { assertWorkspaceWritesAllowed } from "./stateCausalAdmission"
+import { assertWorkspaceWritesAllowed } from "./stateWorkspaceWriteGuard"
 import { causalReviewMetadata, hasUnresolvedCausalChanges } from "./stateCausalReviewMetadata"
 import { persistDeltaCommand } from "./stateDeltaAdmission"
 import { canReuseAdmittedDocument } from "./sync/localAdmissionReuse"

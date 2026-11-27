@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { afterEach, beforeAll, expect, test, vi } from "vitest"
 import { change, init, save, getChangesMetaSince, initializeWasm } from "@automerge/automerge/slim"
-import { assertWorkspaceWritesAllowed } from "../stateCausalAdmission"
+import { assertWorkspaceWritesAllowed } from "../stateWorkspaceWriteGuard"
 import { checkpointAdmissionReady, checkpointHooks } from "./blindCheckpointAdmission"
 import { readReplicaWriterUpgrade } from "./privateReplicaRepository"
 import type { BlindReplicaConfig } from "./blindReplication"
@@ -9,7 +9,7 @@ import { stateRuntime } from "../stateContext"
 import { defaultStorage } from "../storage"
 import type { StoredCausalEvidence } from "../storageJournal"
 import type { useTincanban } from "../state"
-vi.mock("../stateCausalAdmission", () => ({ assertWorkspaceWritesAllowed: vi.fn(async () => {}) }))
+vi.mock("../stateWorkspaceWriteGuard", () => ({ assertWorkspaceWritesAllowed: vi.fn(async () => {}) }))
 vi.mock("./privateReplicaRepository", () => ({ readReplicaWriterUpgrade: vi.fn(async () => undefined) }))
 beforeAll(async () => { await initializeWasm(new Uint8Array(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm"))) })
 afterEach(() => { vi.restoreAllMocks(); stateRuntime.ready.value = false; stateRuntime.pendingWrites = 0 })
