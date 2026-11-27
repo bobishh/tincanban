@@ -31,6 +31,7 @@ import { diagnoseStartupStep, diagnoseStartupOperation } from "./sync/startupDia
 import type { Context } from "@opentelemetry/api";
 import { prepareLocalDeltaAdmission } from "./stateDeltaAdmission";
 import { requestWebLock } from "./webLock"
+import { commitAuthorizedCommand, persistNewLocalChange } from "./stateLocalChangePersistence";
 
 type ReadinessWaiter = {
   resolve: () => void;
@@ -193,7 +194,6 @@ export async function persistAuthorizedCommand(
   profile: LocalProfile,
   storage: WorkspaceStorage,
 ): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
-  const { commitAuthorizedCommand } = await import("./stateLocalChangePersistence");
   await prepareLocalDeltaAdmission(doc.id, storage, profile)
   return storage.withWorkspaceTransaction(doc.id, async transaction => {
     const stored = (await transaction.loadWorkspaceDoc())?.doc;
@@ -211,7 +211,6 @@ export async function persistAuthorizedCommand(
 
 export async function reviewCausalChange(changeHash: string, storage = defaultStorage): Promise<void> {
   await assertWorkspaceWritesAllowed(stateRuntime.activeDoc?.id)
-  const { persistNewLocalChange } = await import("./stateLocalChangePersistence");
   const callbacks: CausalReviewCallbacks = { latestWorkspaceDocument, persistNewLocalChange, updateReactiveState, notifyLocalChanges };
   await (await requireReviewAction()).reviewCausalChange(changeHash, storage, callbacks)
 }
@@ -403,7 +402,6 @@ async function persistCommand(
   profile: LocalProfile,
   storage: WorkspaceStorage,
 ): Promise<void> {
-  const { commitAuthorizedCommand } = await import("./stateLocalChangePersistence");
   await prepareLocalDeltaAdmission(workspaceId, storage, profile)
   await storage.withWorkspaceTransaction(workspaceId, async transaction => {
     const borrowed = stateRuntime.activeDoc?.id === workspaceId ? stateRuntime.activeDoc : null;

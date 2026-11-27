@@ -13,6 +13,7 @@ import { meshTrace } from "./sync/meshTrace"
 import { diagnoseStartupStep } from "./sync/startupDiagnostics"
 import { reusableDeltaAdmission } from "./stateDeltaAdmission"
 import { migrateOwnedWorkspace } from "./stateWorkspaceMigration"
+import { commitAuthorizedCommand } from "./stateLocalChangePersistence"
 
 export async function reclassifyStoredWorkspace(workspaceId: string, storage = defaultStorage, diagnosticContext?: Context): Promise<{
   doc: Automerge.Doc<WorkspaceDocumentV2> | undefined
@@ -42,11 +43,9 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
         returnedLoaded = true
         return { doc: loaded.doc, changed: false }
       }
-      const migrated = await migrateOwnedWorkspace(loaded.doc, stateRuntime.currentProfile, async (source, profile) => {
-        const { commitAuthorizedCommand } = await import("./stateLocalChangePersistence")
-        return phase("migrate-workspace", () => commitAuthorizedCommand(source, { kind: "migrateWorkspaceFormat" },
-          profile, storage, transaction))
-      })
+      const migrated = await migrateOwnedWorkspace(loaded.doc, stateRuntime.currentProfile, (source, profile) =>
+        phase("migrate-workspace", () => commitAuthorizedCommand(source, { kind: "migrateWorkspaceFormat" },
+          profile, storage, transaction)))
       if (migrated !== loaded.doc) {
         projection = migrated
         returnedProjection = true

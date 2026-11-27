@@ -77,6 +77,25 @@ export class StorageDeltaRepository {
     return { doc: createDeltaWorkspaceDocument(checked), heads: [...checked.frontier.heads] }
   }
 
+  async loadAdmittedDocument(checked: Checked): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
+    const { frontier, deltas } = checked
+    const previous = this.entries.get(frontier.workspaceId)
+    const prefix = previous?.checked.frontier
+    if (prefix && canonicalizeJson(prefix) === canonicalizeJson(frontier))
+      return Automerge.clone(previous.document)
+
+    const extendsPrevious = prefix && prefix.generation === frontier.generation &&
+      deltas[prefix.revision]?.previousHash === prefix.chainHash
+    const before = extendsPrevious ? Automerge.clone(previous.document) : undefined
+    try {
+      const access = before ? await import("./sync/workspaceAccess") : undefined
+      const doc = createDeltaWorkspaceDocument(checked, before && prefix ? { document: before, revision: prefix.revision } : undefined)
+      if (before) access!.inheritLocalMoveAccess(before, doc)
+      this.remember(checked, doc)
+      return doc
+    } finally { if (before) Automerge.free(before) }
+  }
+
   async append(frontier: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta, doc: Automerge.Doc<WorkspaceDocumentV2>,
     expectedRevision: string | null, ensureCurrent: () => void) {
     const next = await (await this.journal()).append(frontier, delta, expectedRevision, ensureCurrent)

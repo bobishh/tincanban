@@ -16,7 +16,6 @@ import { listPendingWorkspaceDepartures, readPendingWorkspaceDeparture, updatePe
 import { forgetWorkspaceInRoot } from "./domain/personalRoot"
 import { PersonalRootMapStore } from "./storagePersonalRoot"
 import { StorageTransactionAccess, type LoadedWorkspaceDocument } from "./storageTransactionAccess"
-import { createDeltaWorkspaceDocument } from "./workspaceDeltaJournal"
 import {
   activeHistoryDifference,
   persistWorkspaceInIndexedDb,
@@ -350,8 +349,9 @@ export class WorkspaceStorage extends StorageTransactionAccess {
     if (admitted) {
       const { basis, delta, startupAdmission } = admitted
       const cached = reusable ?? this.loadedDocuments.get(workspaceId)
-      const doc = canReuseDocument(cached, workspaceId, startupAdmission.heads) ? Automerge.clone(cached!) :
-        delta ? createDeltaWorkspaceDocument(delta) : Automerge.load<WorkspaceDocumentV2>(basis.bytes)
+      const doc = delta ? await this.delta.loadAdmittedDocument(delta) :
+        canReuseDocument(cached, workspaceId, startupAdmission.heads) ? Automerge.clone(cached!) :
+          Automerge.load<WorkspaceDocumentV2>(basis.bytes)
       if (canReuseDocument(doc, workspaceId, startupAdmission.heads)) {
         this.rememberDocument(workspaceId, doc)
         return { doc, heads: startupAdmission.heads, startupAdmission }
