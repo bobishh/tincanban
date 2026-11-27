@@ -39,6 +39,7 @@ import {
 } from "./storageJournal"
 import { withWorkspaceMutation } from "./workspaceMutation"
 import { traceStorageRead, type StorageReadTrace } from "./storageReadTrace"
+import { createDeltaWorkspaceDocument } from "./workspaceDeltaJournal"
 
 export type { StoredChange } from "./storageJournal"
 export { WorkspaceRevisionConflict } from "./storageCommitSupport"
@@ -345,22 +346,11 @@ export class WorkspaceStorage extends StorageTransactionAccess {
   async loadWorkspaceDoc(
     workspaceId: string, reusable?: Automerge.Doc<WorkspaceDocumentV2>, trace?: StorageReadTrace,
   ): Promise<LoadedWorkspaceDocument | null> {
-    const admitted = await traceStorageRead(trace, "admitted-snapshot", async () => (await this.delta.journal()).readAdmittedProjection(workspaceId))
-    if (admitted) {
-      const { basis, delta, startupAdmission } = admitted
-      const cached = reusable ?? this.loadedDocuments.get(workspaceId)
-      const doc = delta ? await this.delta.loadAdmittedDocument(delta) :
-        canReuseDocument(cached, workspaceId, startupAdmission.heads) ? Automerge.clone(cached!) :
-          Automerge.load<WorkspaceDocumentV2>(basis.bytes)
-      if (canReuseDocument(doc, workspaceId, startupAdmission.heads)) {
-        this.rememberDocument(workspaceId, doc)
-        return { doc, heads: startupAdmission.heads, startupAdmission }
-      }
-      Automerge.free(doc)
-    }
+    const admitted = await traceStorageRead(trace, "admitted-snapshot", () => this.loadAdmittedDocument(workspaceId, reusable))
+    if (admitted) return admitted
     await traceStorageRead(trace, "received-history", () => this.ensureReceivedHistory(workspaceId, trace))
     const incremental = await traceStorageRead(trace, "delta-document", () => this.delta.loadDocument(workspaceId, reusable))
-    if (incremental) return incremental
+    if (incremental) return { doc: incremental.doc, heads: incremental.heads }
     const snapshot = await traceStorageRead(trace, "snapshot-read", () => readWorkspaceSnapshot(workspaceId))
     if (snapshot) this.inMemory.snapshots.set(workspaceId, snapshot)
 
@@ -379,6 +369,35 @@ export class WorkspaceStorage extends StorageTransactionAccess {
       try { Automerge.free(doc) } catch { /* Preserve the read error if the native instance already failed. */ }
       throw error
     }
+  }
+
+  private async loadAdmittedDocument(workspaceId: string, reusable?: Automerge.Doc<WorkspaceDocumentV2>):
+    Promise<LoadedWorkspaceDocument | undefined> {
+    const warm = await this.delta.loadWarmDocument(workspaceId)
+    if (warm) {
+      const { doc, heads, frontier } = warm
+      try {
+        const saved = typeof indexedDB === "undefined" ? undefined : await this.readRevisionRecord(workspaceId)
+        const admission = saved?.startupAdmission
+        const startupAdmission = admission && admission.basisHash === frontier.basisHash &&
+          Array.isArray(admission.heads) && admission.heads.join() === heads.join()
+          ? { ...admission, revision: saved!.revision } : undefined
+        return { doc, heads, startupAdmission }
+      } catch (error) {
+        Automerge.free(doc)
+        throw error
+      }
+    }
+    const admitted = await (await this.delta.journal()).readAdmittedProjection(workspaceId)
+    if (!admitted) return
+    const { basis, delta, startupAdmission } = admitted
+    const cached = reusable ?? this.loadedDocuments.get(workspaceId)
+    const doc = canReuseDocument(cached, workspaceId, startupAdmission.heads) ? Automerge.clone(cached!) :
+      delta ? createDeltaWorkspaceDocument(delta) : Automerge.load<WorkspaceDocumentV2>(basis.bytes)
+    if (!canReuseDocument(doc, workspaceId, startupAdmission.heads)) { Automerge.free(doc); return }
+    if (delta) this.delta.remember(delta, doc)
+    this.rememberDocument(workspaceId, doc)
+    return { doc, heads: startupAdmission.heads, startupAdmission }
   }
 
   async readWorkspaceOwner(workspaceId: string): Promise<string | undefined> {

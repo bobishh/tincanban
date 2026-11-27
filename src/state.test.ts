@@ -25,6 +25,7 @@ import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "
 import { publicKeyId, toBase64Url } from "./domain/identity"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { withWorkspaceMutation } from "./workspaceMutation"
+import { WorkspaceDeltaJournal } from "./workspaceDeltaJournal"
 import { createWorkspaceDeviceRevocation } from "./sync/meshRecords"
 import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 
@@ -66,11 +67,13 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     await app.executeCommandAsync({ kind: "renameWorkspace", title: "Prepared basis" })
     expect(await defaultStorage.readDeltaFrontier(app.activeWorkspace.id)).toBeDefined()
     const read = vi.spyOn(defaultStorage, "loadWorkspaceDoc")
+    const coldRead = vi.spyOn(WorkspaceDeltaJournal.prototype, "readAdmittedProjection")
     try {
       await app.executeCommandAsync({ kind: "renameWorkspace", title: "Saved without duplicate preparation" })
       expect(read).toHaveBeenCalledTimes(1)
+      expect(coldRead).not.toHaveBeenCalled()
       expect(app.saveState.value).toBe("saved")
-    } finally { read.mockRestore() }
+    } finally { read.mockRestore(); coldRead.mockRestore() }
     resetStateForTest()
     await hydrate()
     expect(app.activeWorkspace.title).toBe("Saved without duplicate preparation")
