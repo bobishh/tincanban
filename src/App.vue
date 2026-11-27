@@ -25,7 +25,6 @@ import ReleaseUpgradeNotice from "./components/ReleaseUpgradeNotice.vue"
 import ConnectedIdentityProfile from "./components/ConnectedIdentityProfile.vue"
 import IdentityAccountControls from "./components/IdentityAccountControls.vue"
 import { useIdentityAccount } from "./app/useIdentityAccount"
-import { useAutomationConnection } from "./app/useAutomationConnection"
 import type { saveIdentityName as identityNameSaverType } from "./app/identityName"
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, type Component, watch } from "vue"
 import type { NarrativeFoldSources } from "./domain/commandTypes"
@@ -41,7 +40,7 @@ import WorkspaceSyncMount from "./components/WorkspaceSyncMount.vue"
 
 const app = useAppController()
 const BoardDragOverlay = defineAsyncComponent<Component>(() => import("./components/BoardDragOverlay.vue"))
-const AutomationConnectionDialog = defineAsyncComponent<Component>(() => import("./components/AutomationConnectionDialog.vue") as Promise<{ default: Component }>)
+const AutomationAccessDialog = defineAsyncComponent<Component>(() => import("./components/AutomationAccessDialog.vue") as Promise<{ default: Component }>)
 const RustyStatusDialog = defineAsyncComponent<Component>(() => import("./components/RustyStatusDialog.vue"))
 const showRustyStatus = ref(new URLSearchParams(window.location.hash.slice(1)).has("rusty-status"))
 const boardAddress = useBoardAddress(app.workspace)
@@ -75,7 +74,8 @@ const identityBoardsBlocked = computed(() => {
   const doc = app.workspace.getActiveDoc()
   return !doc || !isEmptyIdentityBoard.value || isEmptyIdentityBoard.value(doc)
 })
-const { connectingAutomation, describeAutomationBoard, exportAutomationConnection } = useAutomationConnection(app.workspace, browserSignInReturn.returning)
+const automationPath = ref(window.location.pathname)
+watch(browserSignInReturn.returning, () => { automationPath.value = window.location.pathname })
 const workspaceDialogBusy = ref(false)
 function openConnections() {
   showSettings.value = false
@@ -340,7 +340,8 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       </section>
     </DialogWindow>
     <RustyStatusDialog v-if="showRustyStatus" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="app.workspace.getCurrentProfile" :boards="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :controller="app.collaboration.device.blindReplication" @close="showRustyStatus = false" />
-    <AutomationConnectionDialog v-if="connectingAutomation && ready.value" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="currentIdentityProfile" :boards="availableWorkspaces" :describe="describeAutomationBoard" :export-packet="exportAutomationConnection" @sign-in="beginHeaderSignIn" />
+    <AutomationAccessDialog v-if="ready.value && (automationPath === '/automation/connect' || automationPath === '/automation/renew')"
+      :path="automationPath" :workspace="app.workspace" :profile="currentIdentityProfile" @sign-in="beginHeaderSignIn" />
     <template v-if="boardVisible">
 
     <TransitionGroup name="notice" tag="aside" class="notice-overlay" aria-live="polite" aria-atomic="true" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">

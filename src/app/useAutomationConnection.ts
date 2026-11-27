@@ -1,11 +1,8 @@
-import { ref, watch, type Ref } from "vue"
 import type { useTincanban } from "../state"
 import type { AutomationWorkerIdentity, AutomationConfiguration } from "./automation"
 
 /** Compose the connection route with board selection; board signing stays in the existing approval path. */
-export function useAutomationConnection(workspace: ReturnType<typeof useTincanban>, returning: Ref<boolean>) {
-  const connectingAutomation = ref(window.location.pathname === "/automation/connect")
-  watch(returning, () => { connectingAutomation.value = window.location.pathname === "/automation/connect" })
+export function useAutomationConnection(workspace: ReturnType<typeof useTincanban>) {
   async function describeAutomationBoard(workspaceId: string, configuration: AutomationConfiguration) {
     await workspace.whenReady()
     await workspace.switchWorkspace(workspaceId)
@@ -19,5 +16,5 @@ export function useAutomationConnection(workspace: ReturnType<typeof useTincanba
   async function exportAutomationConnection(identity: AutomationWorkerIdentity, workspaceId: string, fingerprint: string, configuration: AutomationConfiguration) {
     return (await import("./automationActivation")).exportAutomationConnectionPacket(workspace, identity, workspaceId, fingerprint, configuration)
   }
-  return { connectingAutomation, describeAutomationBoard, exportAutomationConnection }
+  return { describeAutomationBoard, exportAutomationConnection }
 }

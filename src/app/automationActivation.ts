@@ -3,6 +3,8 @@ import * as Automerge from "@automerge/automerge/slim"
 import type { BlindReplicaConfig } from "./blindReplication"
 import type { AutomationWorkerIdentity, AutomationConfiguration } from "./automation"
 import { automationEntityId } from "../domain/automationLifecycle"
+import { parseAutomationApproval } from "../domain/automationApproval"
+import { hasEntityKind, type WorkspaceDocumentV2 } from "../domain/model"
 import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { defaultProofStore } from "../domain/proofs"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
@@ -13,9 +15,16 @@ import { withLocalStateWriteLock } from "../localStateLock"
 import { assertReplicaCredentialsUnfrozen, replicaCredentialFreezeKey } from "../sync/replicaCredentialFreeze"
 import { privateReplicaBinding } from "../sync/privateReplicaBinding"
 
+type ApprovedGrant = ReturnType<typeof parseAutomationApproval>["grant"]
+type RenewalBinding = {
+  grant: ApprovedGrant
+  storage: Pick<BlindReplicaConfig, "origin" | "scopeId" | "keyEpoch" | "servicePublicKey">
+}
+
 /** Use one configured writer for this board; no keys or bootstrap enter the navigation handoff. */
 export async function exportAutomationConnectionPacket(tincanban: ReturnType<typeof useTincanban>,
-  identity: AutomationWorkerIdentity, workspaceId: string, expectedFingerprint: string, configuration: AutomationConfiguration): Promise<string> {
+  identity: AutomationWorkerIdentity, workspaceId: string, expectedFingerprint: string, configuration: AutomationConfiguration,
+  renewal?: RenewalBinding): Promise<string> {
   const { automationBoardDescription } = await import("./automation")
   const { getReplicaConfigurations } = await import("../sync/privateReplicaRepository")
   const profile = tincanban.getCurrentProfile()
@@ -24,12 +33,13 @@ export async function exportAutomationConnectionPacket(tincanban: ReturnType<typ
   if (automationBoardDescription(doc, configuration).fingerprint !== expectedFingerprint) throw new Error("Board automation settings changed. Review the updated access before approving.")
   const configs = (await getReplicaConfigurations(profile.identity.personId))
     .filter(config => config.workspaceId === workspaceId && !config.removalPending && Boolean(config.writeToken))
+    .filter(config => !renewal || sameRenewalStorage(config, renewal.storage))
     .sort((left, right) => left.origin.localeCompare(right.origin))
   if (!configs[0]) throw new Error("Connect Rusty for this board in Sync, then retry this connection.")
-  return exportApprovedAutomation(tincanban, configs[0], JSON.stringify(identity), configuration)
+  return exportApprovedAutomation(tincanban, configs[0], JSON.stringify(identity), configuration, renewal)
 }
 
-export async function exportApprovedAutomation(tincanban: ReturnType<typeof useTincanban>, config: BlindReplicaConfig, workerIdentity: string, configuration?: AutomationConfiguration) {
+export async function exportApprovedAutomation(tincanban: ReturnType<typeof useTincanban>, config: BlindReplicaConfig, workerIdentity: string, configuration?: AutomationConfiguration, renewal?: RenewalBinding) {
   config = JSON.parse(canonicalizeJson(config)) as BlindReplicaConfig
   configuration = configuration === undefined ? undefined : JSON.parse(canonicalizeJson(configuration)) as AutomationConfiguration
   assertWorkspaceReplicaPurpose(config)
@@ -55,6 +65,8 @@ export async function exportApprovedAutomation(tincanban: ReturnType<typeof useT
   config = writerConfig
   await ensureCurrent()
   const doc = await tincanban.readWorkspaceDoc(config.workspaceId)
+  const worker = JSON.parse(workerIdentity) as AutomationWorkerIdentity
+  if (renewal) requireRenewalBinding(doc, worker.definitionId, config, renewal)
   const capturedHeads = Automerge.getHeads(doc).sort().join(",")
   const activeWorkspaceMatches = () => {
     const active = tincanban.getActiveDoc()
@@ -77,7 +89,7 @@ export async function exportApprovedAutomation(tincanban: ReturnType<typeof useT
   const bytes = await tincanban.readWorkspaceBytes(config.workspaceId)
   const authorization = await exportAuthorizationBundle(bytes, profile)
   const packet = await prepareAutomationActivation({ profile, doc, bytes, authorization, blind: config,
-    worker: JSON.parse(workerIdentity) as AutomationWorkerIdentity, configuration, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+    worker, configuration, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
     signingContext: async (purpose, binding) => {
       const stored = await defaultProofStore.listCertificates()
       const certificates = [...authorization.authority.currentOwner.certificates,
@@ -87,7 +99,7 @@ export async function exportApprovedAutomation(tincanban: ReturnType<typeof useT
       })
     } })
   await ensureCurrent()
-  const worker = JSON.parse(workerIdentity) as AutomationWorkerIdentity
+  if (renewal) requireRenewedScope(renewal.grant.payload.automation, packet.grant.payload.automation!)
   if (config.historicalContentKeyVariants || packet.blind.historicalContentKeyVariants) {
     const { assertAutomationKeyHistorySupported } = await import("./automationInstanceClient")
     await assertAutomationKeyHistorySupported(worker.origin)
@@ -156,4 +168,25 @@ async function readCurrentWriterConfig(tincanban: ReturnType<typeof useTincanban
   }
   await assertReplicaCredentialsUnfrozen(profile.identity.personId, refreshed)
   return refreshed
+}
+
+function sameRenewalStorage(config: BlindReplicaConfig, expected: RenewalBinding["storage"]): boolean {
+  return config.origin === expected.origin && config.scopeId === expected.scopeId &&
+    config.keyEpoch === expected.keyEpoch && config.servicePublicKey === expected.servicePublicKey
+}
+
+function requireRenewalBinding(doc: WorkspaceDocumentV2, definitionId: string | undefined, config: BlindReplicaConfig, renewal: RenewalBinding) {
+  const current = doc.entities[automationEntityId(definitionId ?? "")]
+  if (!hasEntityKind(current, "automation") || !sameRenewalStorage(config, renewal.storage) ||
+      canonicalizeJson(parseAutomationApproval(current.approval).grant) !== canonicalizeJson(renewal.grant)) {
+    throw new Error("The existing automation or its storage changed. Review the access again.")
+  }
+}
+
+function requireRenewedScope(previous: ApprovedGrant["payload"]["automation"], next: ApprovedGrant["payload"]["automation"]) {
+  const { expiresAt: previousExpiry, ...previousScope } = previous
+  const { expiresAt: nextExpiry, ...nextScope } = next
+  if (nextExpiry <= previousExpiry || canonicalizeJson(previousScope) !== canonicalizeJson(nextScope)) {
+    throw new Error("The board no longer has the same automation permissions. Review the changed access first.")
+  }
 }

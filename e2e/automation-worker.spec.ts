@@ -206,6 +206,40 @@ test("Given an archived owner-approved workspace, when an owner delta reaches Wo
   })
 })
 
+test("Given a board with an approved Worker, when renewal is interrupted and retried, then the same Worker receives the same prepared grant", async ({ browser, baseURL }) => {
+  await withApprovedWorkspace(browser, baseURL!, async ({ page, workspace, activation }) => {
+    const existing = activation as { grant: { payload: { grantId: string; personId: string; automation: { expiresAt: number } } } }
+    const url = new URL("/automation/renew", baseURL!)
+    url.search = new URLSearchParams({ workspace: workspace.workspaceId, definition: integrationId,
+      executor: existing.grant.payload.personId }).toString()
+    await page.goto(url.href)
+    const dialog = page.getByRole("dialog", { name: "Restore automation access", exact: true })
+    const restore = dialog.getByRole("button", { name: "Restore access", exact: true })
+    const grantIds: string[] = []
+    await page.route("**/v2/automation-instances/activate", async route => {
+      const { body } = route.request().postDataJSON()
+      grantIds.push(body.packet.grant.payload.grantId)
+      if (grantIds.length === 1) await route.abort()
+      else await route.continue()
+    })
+    await restore.click()
+    await expect(dialog.getByRole("alert")).toBeVisible()
+    await restore.click()
+    await expect(dialog.getByRole("status")).toHaveText("Automation access restored.", { timeout: 45_000 })
+    expect(grantIds).toHaveLength(2)
+    expect(grantIds[1]).toBe(grantIds[0])
+    const renewed = await page.evaluate(async id => {
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
+      const entity = useTincanban().getActiveDoc()?.entities[`automation:${id}`]
+      if (entity?.kind !== "automation") throw new Error("Expected the original automation")
+      return JSON.parse(entity.approval).grant.payload
+    }, integrationId)
+    expect(renewed.personId).toBe(existing.grant.payload.personId)
+    expect(renewed.grantId).not.toBe(existing.grant.payload.grantId)
+    expect(renewed.automation.expiresAt).toBeGreaterThan(existing.grant.payload.automation.expiresAt)
+  })
+})
+
 type ApprovedWorkspace = { page: Page; context: BrowserContext; workerOrigin: string; rustyDirectory: string;
   workspace: WorkspaceSeed; activation: Record<string, unknown> }
 
