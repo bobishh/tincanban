@@ -191,7 +191,8 @@ test("Given owner and editor share a fresh board, when owner closes, then editor
     await ownerDialog.getByRole("button", { name: "Close", exact: true }).first().click()
     server = keeper(join(directory, "config.json"))
     server.stderr.on("data", chunk => { serverErrors += String(chunk) })
-    const authenticated = output(server, /Keeper authenticated peer/, 30_000)
+    // A connect and handshake can each take 12s before the daemon's reconnect backoff.
+    const authenticated = output(server, /Keeper authenticated peer/, 90_000)
     await output(server, /Keeper .* listening/, 30_000)
     await authenticated
     await addLead(page, "Owner online")
