@@ -1,3 +1,4 @@
+import { createStandingAutomationWorkspaceGrant } from "@meta-uber/mesh-workspace"
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import {
   bootstrapIdentity,
@@ -54,6 +55,31 @@ describe("Chat records cryptographic admission (src/chat/records.ts)", () => {
       grant,
     }
   }
+
+  it("admits an attested summary and rejects the same attestation on a new message", async () => {
+    const owner = await createProfile("Owner")
+    const service = await createProfile("Automation")
+    const issuer = await createProfile("Rusty")
+    const grant = await createStandingAutomationWorkspaceGrant(owner, {
+      workspaceId, personId: service.identity.personId,
+      scope: { version: 1, boardId: "board", columns: { lead: "lead", interview: "interview", rejected: "rejected" },
+        fieldIds: ["company"], service: { version: 1, definitionId: "job-hunt", issuerKeyId: issuer.identity.personId } },
+    })
+    const authority = { ...makeOwnerAuthority(owner), grant }
+    const record = await createChatRecord(service, [service.certificate], authority, workspaceId, "chat-message", "Run finished")
+    const now = Date.now()
+    const credential = await signEnvelope(issuer.privateKeys.identityPrivateKey!, {
+      kind: "automation-service-credential", version: 1, grantId: grant.payload.grantId, approvalSignature: grant.signature,
+      deviceId: service.device.deviceId, scopeId: "scope", authorityRevision: 1, issuedAt: now, expiresAt: now + 300_000,
+      operation: { kind: "chat-message" as const, signature: record.signed.signature },
+    }, issuer.identity.personId, "MESH-AUTOMATION-SERVICE/1")
+    const automationOperation = { issuerPublicKey: issuer.identity.publicKey, credential }
+    await expect(verifyChatRecord({ ...record, automationOperation }, workspaceId, owner.identity.personId))
+      .resolves.toMatchObject({ automationOperation })
+    await expect(verifyChatRecord(record, workspaceId, owner.identity.personId)).rejects.toThrow(/attestation/i)
+    const replaced = await createChatRecord(service, [service.certificate], authority, workspaceId, "chat-message", "Other run")
+    await expect(verifyChatRecord({ ...replaced, automationOperation }, workspaceId, owner.identity.personId)).rejects.toThrow(/attestation/i)
+  })
 
   it("rejects a verified signing context supplied with another record author", async () => {
     const owner = await createProfile("Owner")

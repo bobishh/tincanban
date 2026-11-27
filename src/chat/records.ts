@@ -5,7 +5,10 @@ import { validateDisplayName, normalizeDisplayName } from "./names"
 import { peerStore } from "../sync/peerStore"
 import { keyId, verifyDeviceChain, type WorkspaceAuthority } from "../sync/meshRecords"
 import { canWorkspace } from "../domain/permissions"
-import { parseAutomationGrantScope } from "@meta-uber/mesh-workspace"
+import { parseAutomationGrantScope, type StandingAutomationWorkspaceGrant } from "@meta-uber/mesh-workspace"
+import type { RustyAutomationOperationEvidence } from "@meta-uber/mesh-replication/rusty-automation-credentials"
+
+type ChatGrant = WorkspaceGrant | StandingAutomationWorkspaceGrant
 
 export type ChatPayload = {
   kind: "chat-message" | "chat-profile" | "chat-typing"
@@ -23,7 +26,7 @@ export type ChatPayload = {
 export type ChatAuthority = {
   publicKey: string
   certificates: DeviceCertificate[]
-  grant?: WorkspaceGrant
+  grant?: ChatGrant
 }
 
 export type ChatRecord = {
@@ -31,15 +34,16 @@ export type ChatRecord = {
   publicKey: string
   certificates: DeviceCertificate[]
   authority: ChatAuthority
+  automationOperation?: RustyAutomationOperationEvidence
 }
 
-async function grantSignedBy(grant: WorkspaceGrant, authority: WorkspaceAuthority): Promise<boolean> {
-  if (grant.signerKeyId === authority.personId) return verifyEnvelope(grant, authority.publicKey)
+async function grantSignedBy(grant: ChatGrant, authority: WorkspaceAuthority): Promise<boolean> {
+  if (grant.signerKeyId === authority.personId) return verifyEnvelope<ChatGrant["payload"]>(grant, authority.publicKey)
   try {
     const certificates = authority.certificates.filter(cert => cert?.payload?.personId === authority.personId)
     const deviceKey = await verifyDeviceChain({ personId: authority.personId, publicKey: authority.publicKey,
       deviceId: grant.signerKeyId, certificates })
-    return verifyEnvelope(grant, deviceKey)
+    return verifyEnvelope<ChatGrant["payload"]>(grant, deviceKey)
   } catch {
     return false
   }
@@ -124,12 +128,12 @@ function isCurrentOwner(
 }
 
 async function assertGrantPermission(
-  payload: ChatPayload,
+  record: ChatRecord,
   grantWorkspaceId: string,
-  grant: WorkspaceGrant | undefined,
   owners: WorkspaceAuthority[],
-  recordAuthority: ChatAuthority,
 ): Promise<void> {
+  const { authority: recordAuthority, signed: { payload } } = record
+  const grant = recordAuthority.grant
   const revoked = typeof indexedDB !== "undefined" &&
     (await peerStore.listPeers(grantWorkspaceId)).some(peer => peer.personId === payload.personId && peer.revokedAt)
   if (revoked) invalidRecord("Workspace access revoked")
@@ -140,23 +144,31 @@ async function assertGrantPermission(
   if (grant.payload.personId !== payload.personId || grant.payload.workspaceId !== grantWorkspaceId) {
     invalidRecord("No permission to write to this chat")
   }
-  assertChatCapability(grant, payload)
+  const standing = assertChatGrantScope(grant, payload)
   for (const owner of owners) {
     const certificates = owner.publicKey === recordAuthority.publicKey
       ? [...new Map([...owner.certificates, ...recordAuthority.certificates].map(cert => [cert.signature, cert])).values()]
       : owner.certificates
-    if (await grantSignedBy(grant, { ...owner, certificates })) return
+    if (!await grantSignedBy(grant, { ...owner, certificates })) continue
+    if (standing) {
+      const { verifyAutomationChatAttestation } = await import("./automationAttestation")
+      verifyAutomationChatAttestation(record, grant, { ...owner, certificates })
+    }
+    return
   }
   invalidRecord("Invalid workspace grant")
 }
 
-function assertChatCapability(grant: WorkspaceGrant, payload: ChatPayload): void {
-  if (grant.payload.role === "automation") {
-    try { parseAutomationGrantScope(grant.payload.automation, Date.parse(payload.createdAt)) }
+function assertChatGrantScope(grant: ChatGrant, payload: ChatPayload) {
+  const scope = grant.payload.automation
+  const standing = grant.payload.role === "automation" && scope && "service" in scope
+  if (!standing && grant.payload.role === "automation") {
+    try { parseAutomationGrantScope(scope, Date.parse(payload.createdAt)) }
     catch { invalidRecord("Invalid automation chat grant") }
   }
   const capability = payload.kind === "chat-profile" ? "chat.profile" : "chat.write"
   if (!canWorkspace(grant.payload.role, capability)) invalidRecord("No permission to write to this chat")
+  return standing
 }
 
 export async function verifyChatRecord(value: unknown, workspaceId: string, ownerPersonId: string, grantWorkspaceId = workspaceId): Promise<ChatRecord> {
@@ -170,7 +182,7 @@ export async function verifyChatRecord(value: unknown, workspaceId: string, owne
   const signingOwner = owners.find(owner => owner.personId === authorityPersonId && owner.publicKey === recordAuthority.publicKey)
   if (!signingOwner) throw new Error("Invalid workspace authority")
   const actsAsCurrentOwner = isCurrentOwner(payload, signingOwner, storedAuthority, ownerPersonId, recordAuthority)
-  if (!actsAsCurrentOwner) await assertGrantPermission(payload, grantWorkspaceId, recordAuthority.grant, owners, recordAuthority)
+  if (!actsAsCurrentOwner) await assertGrantPermission(record, grantWorkspaceId, owners)
   return record
 }
 

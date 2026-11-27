@@ -22,7 +22,6 @@ import { LazyItemDocuments as ItemDocuments } from "./app/lazyItemDocuments"
 import { ItemFormDialog } from "./app/lazyItemFormDialog"
 import BuildFooter from "./components/BuildFooter.vue"
 import ReleaseUpgradeNotice from "./components/ReleaseUpgradeNotice.vue"
-import ConnectedIdentityProfile from "./components/ConnectedIdentityProfile.vue"
 import IdentityAccountControls from "./components/IdentityAccountControls.vue"
 import { useIdentityAccount } from "./app/useIdentityAccount"
 import type { saveIdentityName as identityNameSaverType } from "./app/identityName"
@@ -33,12 +32,13 @@ import { useAppViewState } from "./app/useAppViewState"
 import { useBoardAddress } from "./app/useBoardAddress"
 import { useMemberAvatars } from "./app/useMemberAvatars"
 import { useAppPublicBoards } from "./app/useAppPublicBoards"
-import { createIdentityOwnerActions } from "./app/identityOwnerActions"
 import { createWorkspaceInviteAction } from "./app/identityPortalFlow"
 import { CausalChangeReview, ColumnDialog, IdentitySettingsPanel, ItemDetailDialog, MeshRelaySettings, MobileDrawer, MoveItemDialog, ObjectConversationLayer, PublicBoardApp, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 import WorkspaceSyncMount from "./components/WorkspaceSyncMount.vue"
 
 const app = useAppController()
+const ConnectedIdentityProfile = defineAsyncComponent<Component>(() =>
+  import("./components/ConnectedIdentityProfile.vue") as Promise<{ default: Component }>)
 const BoardDragOverlay = defineAsyncComponent<Component>(() => import("./components/BoardDragOverlay.vue"))
 const AutomationAccessDialog = defineAsyncComponent<Component>(() => import("./components/AutomationAccessDialog.vue") as Promise<{ default: Component }>)
 const RustyStatusDialog = defineAsyncComponent<Component>(() => import("./components/RustyStatusDialog.vue"))
@@ -149,11 +149,15 @@ const {
   handleStartMove, handleConfirmMove, handleRenameColumn, handleArchiveColumn, addBoardColumn, newBoardColumnArchive, newBoardColumnCollapsible, addingBoardColumn, addBoardColumnError, selectArchiveColumn,
 } = app.actions
 const { publicAccess, publicDelivery } = useAppPublicBoards(app, uiReady)
-const identityOwnerActions = createIdentityOwnerActions({ gate: identityPortalFlow.gate, portalOrigin: identityPortalOrigin, publicAccess,
-  getProfile: app.workspace.getCurrentProfile, getBoard: () => ({ boardId: activeBoard.value?.id ?? "", workspaceId: activeWorkspace.id, sourceHeads: [...currentDocHeads.value] }),
-  isOwner: () => confirmedRole.value === "owner", addMyDevice: sync.selectSyncAll, isSyncChooserOpen: () => sync.isOpen.value && (sync.step.value === "chooser" || sync.step.value === "members") })
-function beginIdentityDeviceEnrollment() { return beginDeviceEnrollment(identityOwnerActions.addMyDevice) }
-const publicAccessWithIdentity = { ...publicAccess, setPublic: identityOwnerActions.setPublic }
+async function loadIdentityOwnerActions() {
+  const { createIdentityOwnerActions } = await import("./app/identityOwnerActions")
+  return createIdentityOwnerActions({ gate: identityPortalFlow.gate, portalOrigin: identityPortalOrigin, publicAccess,
+    getProfile: app.workspace.getCurrentProfile, getBoard: () => ({ boardId: activeBoard.value?.id ?? "", workspaceId: activeWorkspace.id, sourceHeads: [...currentDocHeads.value] }),
+    isOwner: () => confirmedRole.value === "owner", addMyDevice: sync.selectSyncAll, isSyncChooserOpen: () => sync.isOpen.value && (sync.step.value === "chooser" || sync.step.value === "members") })
+}
+async function addMyDevice() { await (await loadIdentityOwnerActions()).addMyDevice() }
+function beginIdentityDeviceEnrollment() { return beginDeviceEnrollment(addMyDevice) }
+const publicAccessWithIdentity = { ...publicAccess, setPublic: async (enabled: boolean) => (await loadIdentityOwnerActions()).setPublic(enabled) }
 function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event); recordUsageAction("item_open") }
 function toggleCardTask(item: Parameters<typeof openBoardItem>[0], markdown: string) { void updateItemMarkdown(item, markdown) }
 async function switchWorkspaceFromDirectory(workspaceId: string) { await handleSwitchWorkspace(workspaceId); boardAddress.navigateToActiveBoard() }
@@ -340,8 +344,8 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       </section>
     </DialogWindow>
     <RustyStatusDialog v-if="showRustyStatus" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="app.workspace.getCurrentProfile" :boards="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :controller="app.collaboration.device.blindReplication" @close="showRustyStatus = false" />
-    <AutomationAccessDialog v-if="ready.value && (automationPath === '/automation/connect' || automationPath === '/automation/renew')"
-      :path="automationPath" :workspace="app.workspace" :profile="currentIdentityProfile" @sign-in="beginHeaderSignIn" />
+    <AutomationAccessDialog v-if="ready.value && automationPath === '/automation/connect'"
+      :workspace="app.workspace" :profile="currentIdentityProfile" @sign-in="beginHeaderSignIn" />
     <template v-if="boardVisible">
 
     <TransitionGroup name="notice" tag="aside" class="notice-overlay" aria-live="polite" aria-atomic="true" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
@@ -492,7 +496,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
     />
 
     </template>
-    <WorkspaceSyncMount v-if="sync.isOpen.value" :dialog="SyncDialog" :sync="sync" :chat="chat" :workspace-id="activeWorkspace.id" :member-avatars="memberAvatars" :revoking-peer="revokingPeer" :blind-replication="app.collaboration.device.blindReplication" :my-device-removal="myDeviceRemoval" :mesh-members="meshMembers" :current-role="currentRole" :succession="activeSuccession" :can-claim-succession="canClaimSuccession" :can-manage-access="canManageAccess" :transferring-ownership="transferringOwnership" :leaving-mesh="leavingMesh" :peer-access-error="peerAccessError" :device-presence="devicePresence" :mesh-presence="meshPresence" :active-mesh-retry-at="activeMeshRetryAt" :identity-portal-origin="identityPortalOrigin ?? ''" :add-my-device="identityOwnerActions.addMyDevice" :generate-workspace-invite="generateWorkspaceInviteWithIdentity" :begin-enrollment-sign-in="beginEnrollmentSignIn" :revoke-workspace-peer="revokeWorkspacePeer" :transfer-workspace-ownership="transferWorkspaceOwnership" :leave-workspace-mesh="leaveWorkspaceMesh" :set-workspace-successor="setWorkspaceSuccessor" :vote-for-workspace-successor="voteForWorkspaceSuccessor" :claim-workspace-succession="claimWorkspaceSuccession" :promote-workspace-peer="promoteWorkspacePeer" :renew-workspace-peer-access="renewWorkspacePeerAccess" @update-selected-workspace-ids="sync.selectedWorkspaceIds.value = $event" @update-selected-workspace-id="sync.selectedWorkspaceId.value = $event">
+    <WorkspaceSyncMount v-if="sync.isOpen.value" :dialog="SyncDialog" :sync="sync" :chat="chat" :workspace-id="activeWorkspace.id" :member-avatars="memberAvatars" :revoking-peer="revokingPeer" :blind-replication="app.collaboration.device.blindReplication" :my-device-removal="myDeviceRemoval" :mesh-members="meshMembers" :current-role="currentRole" :succession="activeSuccession" :can-claim-succession="canClaimSuccession" :can-manage-access="canManageAccess" :transferring-ownership="transferringOwnership" :leaving-mesh="leavingMesh" :peer-access-error="peerAccessError" :device-presence="devicePresence" :mesh-presence="meshPresence" :active-mesh-retry-at="activeMeshRetryAt" :identity-portal-origin="identityPortalOrigin ?? ''" :add-my-device="addMyDevice" :generate-workspace-invite="generateWorkspaceInviteWithIdentity" :begin-enrollment-sign-in="beginEnrollmentSignIn" :revoke-workspace-peer="revokeWorkspacePeer" :transfer-workspace-ownership="transferWorkspaceOwnership" :leave-workspace-mesh="leaveWorkspaceMesh" :set-workspace-successor="setWorkspaceSuccessor" :vote-for-workspace-successor="voteForWorkspaceSuccessor" :claim-workspace-succession="claimWorkspaceSuccession" :promote-workspace-peer="promoteWorkspacePeer" :renew-workspace-peer-access="renewWorkspacePeerAccess" @update-selected-workspace-ids="sync.selectedWorkspaceIds.value = $event" @update-selected-workspace-id="sync.selectedWorkspaceId.value = $event">
       <template #board-freshness>
         <span class="save-state board-freshness" role="status" aria-label="Board freshness"
           title="Latest confirmed check for each board source.">

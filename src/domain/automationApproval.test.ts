@@ -23,3 +23,18 @@ it("Given mismatched grant, signer or board, when restoring public approval, the
     expect(() => parseAutomationApproval(JSON.stringify({ ...approval(), grant: { ...approval().grant, ...patch } }))).toThrow()
   }
 })
+
+it("Given a standing approval, when restoring its metadata, then preserve scope and pin it to the same definition", () => {
+  const original = approval()
+  const { expiresAt, ...scope } = original.grant.payload.automation
+  expect(expiresAt).toBeGreaterThan(0)
+  const service = { version: 1, definitionId: original.definition.payload.id, issuerKeyId: "A".repeat(43) }
+  const withScope = (automation: unknown) => ({
+    ...original, grant: { ...original.grant, payload: { ...original.grant.payload, automation } },
+  })
+
+  const standing = withScope({ ...scope, service })
+  expect(parseAutomationApproval(JSON.stringify(standing))).toEqual(standing)
+  expect(() => parseAutomationApproval(JSON.stringify(withScope({ ...scope, service: { ...service, definitionId: "other" } })))).toThrow()
+  expect(() => parseAutomationApproval(JSON.stringify(withScope({ ...scope, service, expiresAt: 2000000000000 })))).toThrow()
+})

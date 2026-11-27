@@ -6,6 +6,7 @@ import type { LocalProfile } from "../domain/identity"
 import { readLocal, writeLocal } from "../localDb"
 import { createAutomationConnection, parseAutomationConnectionRequest,
   type AutomationConnectionRequest, type ResolvedAutomationConnection } from "../app/automationConnection"
+import type { AutomationInstanceReadInput, AutomationInstanceRelay } from "../app/automationInstanceClient"
 import { createOwnerRequest } from "../app/automationClient"
 import type { AutomationWorkerIdentity, AutomationConfiguration, automationBoardDescription } from "../app/automation"
 
@@ -13,13 +14,22 @@ type BoardDescription = ReturnType<typeof automationBoardDescription>
 const props = defineProps<{
   ready: boolean; workspaceId: string; boards: { id: string; title: string }[]
   profile: LocalProfile | null
-  describe: (workspaceId: string, configuration: AutomationConfiguration) => Promise<BoardDescription>
+  describe: (workspaceId: string, configuration: AutomationConfiguration, target?: AutomationInstanceReadInput) => Promise<BoardDescription>
+  prepareServiceAccess: (target: AutomationInstanceReadInput, relay: AutomationInstanceRelay,
+    fingerprint: string, ensureCurrent: () => void) => Promise<{ packet: string; identity: AutomationWorkerIdentity }>
+  registerServiceAccess: (identity: AutomationWorkerIdentity, packet: unknown, ensureCurrent: () => void) => Promise<void>
   exportPacket: (identity: AutomationWorkerIdentity, workspaceId: string, fingerprint: string, configuration: AutomationConfiguration) => Promise<string>
 }>()
 const emit = defineEmits<{ signIn: [] }>()
 const request = shallowRef<AutomationConnectionRequest>()
 const resolved = shallowRef<ResolvedAutomationConnection>()
 const description = shallowRef<BoardDescription>()
+const existingTarget = computed<AutomationInstanceReadInput | undefined>(() => {
+  const connection = resolved.value
+  if (connection?.existing) return { ...connection.existing, integrationId: connection.integrationId,
+    definitionId: connection.integrationId, origin: connection.automationOrigin }
+  return undefined
+})
 const selected = ref(props.workspaceId), pending = ref(false), loading = ref(true), error = ref("")
 const ownerMatches = computed(() => props.profile?.identity.personId === request.value?.owner_person_id)
 const canApprove = computed(() => props.ready && ownerMatches.value && Boolean(description.value && resolved.value) && !pending.value && !loading.value)
@@ -29,16 +39,31 @@ function close() { window.location.assign("/") }
 function client(approval?: { profile: LocalProfile; fingerprint: string }) {
   if (!request.value) throw new Error("Open this connection from Reflux")
   const captured = request.value
+  const store = (key: string) => ({ load: () => readLocal(key), save: (value: string) => writeLocal(key, value) })
   const stateKey = `tincanban.automation-approval.v1.${captured.owner_person_id}.${captured.intent_id}`
+  const ensureCurrent = () => {
+    if (!approval) return
+    const current = props.profile
+    if (current?.identity.personId !== approval.profile.identity.personId ||
+        current.device.deviceId !== approval.profile.device.deviceId || current.certificate.signature !== approval.profile.certificate.signature) {
+      throw new Error("Identity changed during automation approval")
+    }
+  }
   return createAutomationConnection({ request: captured,
-    store: { load: () => readLocal(stateKey), save: value => writeLocal(stateKey, value) },
-    ensureCurrent: () => {
-      if (!approval) return
-      const current = props.profile
-      if (current?.identity.personId !== approval.profile.identity.personId ||
-          current.device.deviceId !== approval.profile.device.deviceId || current.certificate.signature !== approval.profile.certificate.signature) {
-        throw new Error("Identity changed during automation approval")
-      }
+    store: store(stateKey),
+    ensureCurrent,
+    registerServiceAccess: (identity, packet) => props.registerServiceAccess(identity, packet, ensureCurrent),
+    existing: {
+      store: target => store(`tincanban.automation-service-approval.v1.${captured.owner_person_id}.${target.integrationId}`),
+      prepare: (target, relay) => {
+        if (!approval) throw new Error("Approve access before exporting")
+        return props.prepareServiceAccess(target, relay, approval.fingerprint, ensureCurrent)
+      },
+      activate: async (target, relay, packet) => {
+        if (!approval) throw new Error("Approve access before activation")
+        const { activateExistingAutomation } = await import("../app/automationInstanceClient")
+        await activateExistingAutomation(approval.profile, { ...target, packet, adoptLegacy: false }, { relay, ensureCurrent })
+      },
     },
     sign: async input => {
       if (!approval) throw new Error("Approve access before signing")
@@ -70,6 +95,7 @@ async function load() {
       request.value = parseAutomationConnectionRequest(JSON.parse(await readLocal(`tincanban.automation-intent.v1.${id}`) ?? "null"))
     }
     resolved.value = await client().resolve()
+    if (existingTarget.value) selected.value = existingTarget.value.workspaceId
     if (props.ready && ownerMatches.value) await selectBoard()
   } catch (cause) { error.value = message(cause) }
   finally { loading.value = false }
@@ -80,7 +106,7 @@ async function selectBoard() {
   error.value = ""
   try {
     if (!resolved.value) throw new Error("Connection configuration unavailable")
-    description.value = await props.describe(selected.value, resolved.value.configuration)
+    description.value = await props.describe(selected.value, resolved.value.configuration, existingTarget.value)
   }
   catch (cause) { error.value = message(cause) }
   finally { pending.value = false }
@@ -117,7 +143,7 @@ onMounted(load)
         <template v-if="ownerMatches">
           <div class="automation-board-label">
             <label for="automation-connection-board">Board</label>
-            <select id="automation-connection-board" v-model="selected" :disabled="pending || !ready" @change="selectBoard">
+            <select id="automation-connection-board" v-model="selected" :disabled="pending || !ready || Boolean(existingTarget)" @change="selectBoard">
               <option v-for="board in boards" :key="board.id" :value="board.id">{{ board.title }}</option>
             </select>
           </div>
@@ -125,7 +151,7 @@ onMounted(load)
             <p><strong>Read:</strong> Entire workspace, including its documents.</p>
             <p><strong>Write:</strong> Create and update job cards in {{ description.columns.join(', ') }}; send summaries on your behalf in workspace chat, marked Automation.</p>
             <p><strong>Fields:</strong> {{ description.fields.join(', ') }}.</p>
-            <p class="dialog-copy">Access lasts 30 days. Existing cards stay in place.</p>
+            <p class="dialog-copy">Access continues until withdrawn. Rusty renews the executor’s short-lived credentials automatically.</p>
           </div>
         </template>
         <template v-else>

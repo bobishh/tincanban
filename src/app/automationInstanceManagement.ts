@@ -4,7 +4,7 @@ import type { AutomationInstanceIdentityPayload } from "../domain/automationInst
 import type { LocalProfile } from "../domain/identity"
 import type { AutomationWorkerIdentity } from "./automation"
 import { activateExistingAutomation, discoverAutomationInstance, readAutomationInstance,
-  type AutomationInstanceClientGuards } from "./automationInstanceClient"
+  type AutomationInstanceClientGuards, type AutomationInstanceReadInput } from "./automationInstanceClient"
 
 export type InspectedAutomationInstance = {
   identity: AutomationWorkerIdentity
@@ -31,12 +31,17 @@ export async function inspectExistingAutomation(profileValue: LocalProfile, inpu
   assertOrigin(input.origin)
   await guards?.ensureCurrent?.()
   const { integrationId } = await discoverAutomationInstance(profile, input, guards)
+  return inspectKnownAutomation(profile, { ...input, integrationId }, guards)
+}
+
+export async function inspectKnownAutomation(profile: LocalProfile, target: AutomationInstanceReadInput,
+  guards?: AutomationInstanceClientGuards): Promise<InspectedAutomationInstance> {
+  const { integrationId } = target
+  const { proof, identity } = await readAutomationInstance(profile, target, guards)
   await guards?.ensureCurrent?.()
-  const { proof, identity } = await readAutomationInstance(profile, { ...input, integrationId }, guards)
-  await guards?.ensureCurrent?.()
-  assertIdentityMatchesRoute(identity, input, integrationId)
+  assertIdentityMatchesRoute(identity, target, integrationId)
   const description = parseAutomationInstanceDescription(identity.description)
-  return { description, identity: workerIdentityFromProof(proof, identity, input, integrationId) }
+  return { description, identity: workerIdentityFromProof(proof, identity, target, integrationId) }
 }
 
 /** Require explicit consent for legacy adoption or expired approvals; send the exact current packet unchanged. */
@@ -83,7 +88,7 @@ function workerIdentityFromProof(proof: Awaited<ReturnType<typeof readAutomation
 }
 
 function requireApprovalIfNeeded(description: AutomationInstanceDescription, explicitApproval: boolean): void {
-  if (!explicitApproval && (description.adoptionRequired || description.expiresAt <= Date.now())) {
+  if (!explicitApproval && (description.adoptionRequired || description.expiresAt !== null && description.expiresAt <= Date.now())) {
     throw new Error("Explicit approval is required to adopt or renew this automation")
   }
 }

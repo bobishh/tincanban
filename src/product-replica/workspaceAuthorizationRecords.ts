@@ -1,11 +1,14 @@
 import { canonicalizeJson, type SignedEnvelope } from "../domain/identityCrypto"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
+import type { StandingAutomationWorkspaceGrant } from "@meta-uber/mesh-workspace"
+import type { RustyAutomationOperationEvidence } from "@meta-uber/mesh-replication/rusty-automation-credentials"
 
 export type WorkspaceChangeAuthorization = {
   signed: SignedEnvelope<{ kind: "workspace-changes"; version: 1; workspaceId: string; hashes: string[]; personId: string; deviceId: string }>
   publicKey: string
   certificates: DeviceCertificate[]
-  grant?: WorkspaceGrant
+  grant?: WorkspaceGrant | StandingAutomationWorkspaceGrant
+  automationOperation?: RustyAutomationOperationEvidence
   ownerPublicKey: string
   ownerCertificates: DeviceCertificate[]
 }
@@ -33,12 +36,13 @@ function mergeAuthorization(current: WorkspaceChangeAuthorization, incoming: Wor
   return { signed: canonicalChoice(current.signed, incoming.signed), publicKey: canonicalChoice(current.publicKey, incoming.publicKey),
     certificates: mergeCertificates(current.certificates, incoming.certificates),
     ...(current.grant || incoming.grant ? { grant: current.grant && incoming.grant ? canonicalChoice(current.grant, incoming.grant) : current.grant ?? incoming.grant } : {}),
+    ...(current.automationOperation ? { automationOperation: current.automationOperation } : {}),
     ownerPublicKey: mergeRequiredText(current.ownerPublicKey, incoming.ownerPublicKey),
     ownerCertificates: mergeCertificates(current.ownerCertificates, incoming.ownerCertificates) }
 }
 
 function authorizationVariantKey(record: WorkspaceChangeAuthorization): string {
-  return `${record.signed.signature}:${canonicalizeJson(record.grant ?? null)}`
+  return `${record.signed.signature}:${canonicalizeJson(record.grant ?? null)}:${canonicalizeJson(record.automationOperation ?? null)}`
 }
 
 export function mergeAuthorizationRecords(existing: WorkspaceChangeAuthorization[], incoming: WorkspaceChangeAuthorization[]) {
@@ -53,5 +57,6 @@ export function mergeAuthorizationRecords(existing: WorkspaceChangeAuthorization
     })
   }
   return [...result.values()].sort((left, right) => left.signed.signature.localeCompare(right.signed.signature) ||
-    canonicalizeJson(left.grant ?? null).localeCompare(canonicalizeJson(right.grant ?? null)))
+    canonicalizeJson(left.grant ?? null).localeCompare(canonicalizeJson(right.grant ?? null)) ||
+    canonicalizeJson(left.automationOperation ?? null).localeCompare(canonicalizeJson(right.automationOperation ?? null)))
 }

@@ -139,6 +139,15 @@ it("Given an expired paused approval, when owner explicitly renews, then keep ty
   expect(doc.entities[entityId]?.controls).toEqual({ [pausedHead]: JSON.stringify({ state: "paused", supersedes: [] }) })
 
   vi.setSystemTime(new Date(initialExpiry + 1))
+  const serviceIssuerKeyId = "A".repeat(43)
+  const standing = await prepareAutomationActivation({ ...input, serviceIssuerKeyId })
+  const { expiresAt, ...scope } = initial.grant.payload.automation!
+  expect(expiresAt).toBeGreaterThan(0)
+  expect(standing.grant.payload.automation).toEqual({ ...scope,
+    service: { version: 1, definitionId, issuerKeyId: serviceIssuerKeyId } })
+  expect(standing.definition.payload).toMatchObject({ id: definitionId, parameters: initial.definition.payload.parameters })
+  expect(standing.grant.payload.personId).toBe(worker.identity.personId)
+  expect(await verifyEnvelope(standing.grant, owner.device.publicKey)).toBe(true)
   const renewed = await prepareAutomationActivation({ ...input, expiresAt: requestedExpiry, configuration: {
     name: "Typed intake", type: "job-intake", typeVersion: 1, parameters: { sources: ["website", "email"] },
   } })

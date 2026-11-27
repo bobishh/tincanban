@@ -3,7 +3,7 @@ export type AutomationScope = {
   boardId: string;
   columns: { lead: string; applied?: string; interview: string; rejected: string };
   fieldIds: { company: string; role: string; jobUrl: string; notes?: string; sourceText?: string; roleType?: string; seniority?: string };
-  expiresAt: string;
+  expiresAt: string | null;
 };
 
 export type AutomationIntegration = {

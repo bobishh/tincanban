@@ -5,7 +5,7 @@ import { privateEmailRoutes } from "./emailRoutes";
 import { correlateApplication, emailApplicationIdentity, emailNoteText, gmailForwardingConfirmationUrl } from "./email";
 import { automationTelemetry, configureAutomationTelemetry, flushAutomationTelemetryAfter, recordAutomationException, withAutomationSpan } from "./telemetry";
 import type { JobPageFetcher } from "./extraction";
-import { AutomationReplica, AutomationControlError, type AutomationActivationPacket, type AutomationCandidate,
+import { AutomationReplica, AutomationControlError, automationGrantExpiry, type AutomationActivationPacket, type AutomationCandidate,
   type AutomationManagementInspector, type ReplicaTransport } from "./replica";
 import { runRegisteredAutomation } from "./handlers";
 import { canonicalizeJson, sha256Base64Url } from "../../../src/domain/identityCrypto";
@@ -84,7 +84,7 @@ type EventRow = {
 type SignedReviewMailbox = Omit<ApplicationReviewMailbox, "observation"> & { observation: AutomationObservationProof };
 
 type OwnerRegistration = { integrationId: string; workspaceId: string; ownerPersonId: string };
-type ActivationResult = { ok: true; status: "active" | "paused" | "deleted"; workspaceId: string; synced: true } |
+type ActivationResult = { ok: true; status: "active" | "paused" | "deleted"; workspaceId: string; synced: true; access?: ReturnType<AutomationReplica["accessObservationForRuntime"]> } |
   { ok: false; status: 422 | 503; error: string; detail?: string };
 type InstanceManagementResult = AutomationInstanceIdentityProof | { integrationId: string } | ActivationResult;
 
@@ -336,7 +336,7 @@ export class ExecutionCoordinator {
 
   private async activateReplicaNow(integrationId: string, identitySecret: string, storageSecret: string,
     packet: AutomationActivationPacket, origin?: string): Promise<
-      | { ok: true; status: "active" | "paused" | "deleted"; workspaceId: string; synced: true }
+      | { ok: true; status: "active" | "paused" | "deleted"; workspaceId: string; synced: true; access?: ReturnType<AutomationReplica["accessObservationForRuntime"]> }
       | { ok: false; status: 422 | 503; error: string; detail?: string }
     > {
     this.assertStorageNotFrozen();
@@ -378,7 +378,8 @@ export class ExecutionCoordinator {
         detail: error instanceof Error ? error.message : "Rusty synchronization failed" };
     }
     await persist(replica.serialize());
-    return { ok: true, status: replica.controlForRuntime().state, workspaceId: packet.workspaceId, synced: true };
+    return { ok: true, status: replica.controlForRuntime().state, workspaceId: packet.workspaceId, synced: true,
+      ...(automationGrantExpiry(packet.grant) === null ? { access: replica.accessObservationForRuntime() } : {}) };
   }
 
   async saveReplicaState(secret: string, serialized: string): Promise<void> {
@@ -675,7 +676,12 @@ export class ExecutionCoordinator {
       if (frozen && historyAction) throw new Error("Resume storage credential transition before history maintenance");
       if (historyFrozen && rotationAction) throw new Error("Resume history transition before storage credential maintenance");
       if (frozen && !rotationAction && action !== "identity" && action !== "discover") throw new Error("Storage credential transition is frozen; resume that transition first");
-      if (!frozen && !historyFrozen && !historyAction) await inspector.pull(guard);
+      const activation = action === "activate" && "packet" in body ? body.packet as AutomationActivationPacket : undefined;
+      const incomingScope = activation?.grant?.payload?.automation;
+      const standingActivation = incomingScope && "service" in incomingScope;
+      // Standing activation synchronizes the merged replica with its new proof. Rusty has
+      // already retired the legacy bearer by the time this signed packet can be delivered.
+      if (!frozen && !historyFrozen && !historyAction && !standingActivation) await inspector.pull(guard);
       await guard();
       inspector.describe(origin, body.workspaceId, body.definitionId);
       if (action === "discover") return { integrationId: this.ctx.id.name! };
@@ -975,9 +981,10 @@ export class ExecutionCoordinator {
     if (description.state === "deleted") throw new Error("Deleted automation cannot be renewed or adopted");
     if (description.adoptionRequired !== body.adoptLegacy) throw new Error("Confirm approval before connecting this existing Worker");
     const configured = await this.getRegisteredIntegration() ?? parseIntegrations(this.env).find(value => value.id === body.integrationId);
+    const grantExpiry = automationGrantExpiry(packet.grant);
     const routing: AutomationIntegration = { ...(configured ?? { allowedForwarders: [] }), id: body.integrationId,
       workspaceId: body.workspaceId, scope: { version: 1, ...packet.bindings,
-        expiresAt: new Date(packet.grant.payload.automation!.expiresAt).toISOString() } };
+        expiresAt: grantExpiry === null ? null : new Date(grantExpiry).toISOString() } };
     const persist = async (next: string) => {
       await publishGuard(next);
       const ownerPersonId = JSON.parse(next).authority.currentOwner.personId as string;
@@ -1002,7 +1009,8 @@ export class ExecutionCoordinator {
     }
     observeInspector(await AutomationReplica.inspectForManagement(replica.serialize(), profile, value => this.saveReplicaState(storageSecret, value)));
     await guard();
-    return { ok: true, status: replica.controlForRuntime().state, workspaceId: body.workspaceId, synced: true };
+    return { ok: true, status: replica.controlForRuntime().state, workspaceId: body.workspaceId, synced: true,
+      ...(grantExpiry === null ? { access: replica.accessObservationForRuntime() } : {}) };
   }
 
   /** Authenticated HTTP requests enter the same serialized queue as activation, controls and event processing. */

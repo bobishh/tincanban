@@ -1,6 +1,6 @@
 import { canonicalizeJson, sha256Base64Url, type LocalProfile, type SignedEnvelope } from "../domain/identity"
 import { hasEntityKind, type DeviceCertificate, type WorkspaceDocumentV2, type WorkspaceGrant } from "../domain/model"
-import { parseAutomationApproval } from "../domain/automationApproval"
+import { isLegacyAutomationGrant, parseAutomationApproval } from "../domain/automationApproval"
 import { automationLifecycle } from "../domain/automationLifecycle"
 import { defaultProofStore, validateCertificateChain } from "../domain/proofs"
 import { signWithContext, signingEvidence } from "../domain/signingContext"
@@ -91,7 +91,7 @@ function admittedAutomationGrants(document: WorkspaceDocumentV2 | undefined, wor
     const { grant } = parseAutomationApproval(entity.approval)
     if (grant.payload.workspaceId !== workspaceId || grant.payload.automation.boardId !== boardId ||
       grant.payload.personId !== entity.executor.personId) throw new Error("Public delivery automation approval does not match its board")
-    grants.push(grant)
+    if (isLegacyAutomationGrant(grant)) grants.push(grant)
   }
   return grants
 }

@@ -1,11 +1,13 @@
-import type { AutomationGrantScope } from "../domain/model"
+import type { AutomationGrantScope, WorkspaceGrant } from "../domain/model"
+import { createStandingAutomationWorkspaceGrant, type StandingAutomationWorkspaceGrant } from "@meta-uber/mesh-workspace"
+import type { SignedEnvelope } from "../domain/identityCrypto"
 import { canonicalizeJson, publicKeyId, verifyEnvelope, type LocalProfile } from "../domain/identity"
 import { automationTypes, parseAutomationDefinition, type AutomationDefinition } from "../domain/automationContract"
 import { hasEntityKind, type DeviceCertificate, type WorkspaceDocumentV2 } from "../domain/model"
 import { createAutomationWorkspaceGrant, validateCertificateChain, verifyWorkspaceGrant } from "../domain/proofs"
 import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { automationEntityId, automationLifecycle, isAutomationOrigin } from "../domain/automationLifecycle"
-import { parseAutomationApproval } from "../domain/automationApproval"
+import { isLegacyAutomationGrant, parseAutomationApproval, type LegacyAutomationGrant } from "../domain/automationApproval"
 import { verifyAutomationDefinition } from "../domain/automationDefinitionProof"
 import { resolveSigningContext, signWithContext, signingEvidence, type VerifiedSigningContext } from "../domain/signingContext"
 import { assertWorkspaceReplicaPurpose } from "../sync/replicaPurpose"
@@ -29,9 +31,24 @@ type AutomationAuthorization = { version: 1; records: unknown[]; authority: {
 
 type AutomationActivationInput<A extends AutomationAuthorization, B extends { workspaceId: string }> = {
   profile: LocalProfile; doc: WorkspaceDocumentV2; bytes: Uint8Array; authorization: A;
-  blind: B; worker: AutomationWorkerIdentity; expiresAt: number; configuration?: AutomationConfiguration;
+  blind: B; worker: AutomationWorkerIdentity; expiresAt: number; configuration?: AutomationConfiguration; serviceIssuerKeyId?: string;
   signingContext?: (purpose: string, binding: Record<string, string | number>) => Promise<VerifiedSigningContext>
 }
+
+type AutomationActivation<A, B, G> = {
+  version: 2; workspaceId: string; blind: B; grant: G; bindings: ReturnType<typeof selectAutomationBindings>;
+  initial: { document: string; authorization: A; chat: null }; definition: SignedEnvelope<AutomationDefinition>
+}
+
+export function prepareAutomationActivation<A extends AutomationAuthorization, B extends { workspaceId: string }>(
+  input: AutomationActivationInput<A, B> & { serviceIssuerKeyId: string },
+): Promise<AutomationActivation<A, B, StandingAutomationWorkspaceGrant>>
+export function prepareAutomationActivation<A extends AutomationAuthorization, B extends { workspaceId: string }>(
+  input: AutomationActivationInput<A, B> & { serviceIssuerKeyId?: undefined },
+): Promise<AutomationActivation<A, B, WorkspaceGrant>>
+export function prepareAutomationActivation<A extends AutomationAuthorization, B extends { workspaceId: string }>(
+  input: AutomationActivationInput<A, B>,
+): Promise<AutomationActivation<A, B, WorkspaceGrant | StandingAutomationWorkspaceGrant>>
 
 /** Produces private activation data only after local owner approval. */
 export async function prepareAutomationActivation<
@@ -46,21 +63,19 @@ export async function prepareAutomationActivation<
     throw new Error("Only the verified workspace owner can approve automation")
   }
   await validateWorkerIdentity(profile, worker)
-  const bindings = selectAutomationBindings(doc)
+  let bindings = selectAutomationBindings(doc)
   const definitionId = worker.definitionId ?? worker.integrationId ?? worker.personId
   const existing = doc.entities[automationEntityId(definitionId)]
-  const expiresAt = input.expiresAt
+  const { expiresAt, serviceIssuerKeyId } = input
+  let configuration = input.configuration
   const initial = { document: encodeBlindBytes(input.bytes), authorization, chat: null }
   if (existing) {
-    if (!hasEntityKind(existing, "automation")) throw new Error("Automation instance ID is occupied")
-    const previous = parseAutomationApproval(existing.approval)
-    const legacyBindings = { ...bindings, columns: { ...bindings.columns } }
-    if (!previous.grant.payload.automation.columns.applied) delete legacyBindings.columns.applied
-    const approval = await existingAutomationApproval(existing, profile, worker, authorization, doc.id, legacyBindings, input.bytes, Boolean(input.configuration))
-    if (!input.configuration) return { version: 2 as const, workspaceId: doc.id, blind, ...approval, bindings: legacyBindings, initial }
-
+    const prior = await resolveExistingActivation({ existing, bindings, input })
+    if (prior.approval) return { version: 2 as const, workspaceId: doc.id, blind, ...prior.approval, bindings: prior.bindings, initial }
+    configuration = prior.configuration
+    bindings = prior.bindings
   }
-  const { configured, type, parameters, typeVersion } = configuredActivation(input, bindings)
+  const { configured, type, parameters, typeVersion } = configuredActivation({ doc, configuration }, bindings)
   const contextFor = input.signingContext ?? ((purpose: string, binding: Record<string, string | number>) =>
     resolveSigningContext({ profile, purpose, binding, certificates: authorization.authority.currentOwner.certificates ?? [profile.certificate],
       authorityRevision: canonicalizeJson(authorization.authority), current: async () => ({ personId: live.profile.identity.personId,
@@ -68,19 +83,46 @@ export async function prepareAutomationActivation<
   const grantContext = await contextFor("workspace-grant", { workspaceId: doc.id, personId: worker.personId,
     accessEpoch: authorization.authority.currentEpoch })
   initial.authorization = carryActivationSignerEvidence(profile, authorization, grantContext)
-  const grant = await createAutomationWorkspaceGrant(profile, doc.id, worker.personId, {
-    version: typeVersion, boardId: bindings.boardId, columns: bindings.columns, fieldIds: Object.values(bindings.fieldIds), expiresAt,
-  }, authorization.authority.currentEpoch, grantContext)
+  const scope = { version: typeVersion, boardId: bindings.boardId, columns: bindings.columns, fieldIds: Object.values(bindings.fieldIds) }
+  const issuer = signingEvidence(grantContext)
+  const grant = serviceIssuerKeyId ? await createStandingAutomationWorkspaceGrant(profile, {
+    workspaceId: doc.id, personId: worker.personId, accessEpoch: authorization.authority.currentEpoch,
+    scope: { ...scope, service: { version: 1, definitionId, issuerKeyId: serviceIssuerKeyId } },
+  }, { personId: grantContext.personId, deviceId: grantContext.deviceId, publicKey: issuer.identity.publicKey,
+    certificates: issuer.certificates, sign: payload => signWithContext(grantContext, payload) })
+    : await createAutomationWorkspaceGrant(profile, doc.id, worker.personId, { ...scope, expiresAt },
+      authorization.authority.currentEpoch, grantContext)
   const definition: AutomationDefinition = parseAutomationDefinition({
     kind: "automation-definition", version: 1, id: definitionId,
     name: configured?.title ?? type.title, type: type.type, typeVersion: type.version,
-    parameters, ...input.configuration, permissions: type.permissions,
+    parameters, ...configuration, permissions: type.permissions,
     scope: { workspaceId: doc.id, boardId: bindings.boardId, grantId: grant.payload.grantId },
   })
   const definitionContext = await contextFor("automation-definition", { id: definitionId })
   assertActivationSigner(profile, definitionContext)
   return { version: 2 as const, workspaceId: doc.id, blind, grant, bindings, initial,
     definition: await signWithContext(definitionContext, definition) }
+}
+
+async function resolveExistingActivation({ existing, bindings, input }: {
+  existing: WorkspaceDocumentV2["entities"][string]; bindings: ReturnType<typeof selectAutomationBindings>;
+  input: AutomationActivationInput<AutomationAuthorization, { workspaceId: string }>
+}) {
+  if (!hasEntityKind(existing, "automation")) throw new Error("Automation instance ID is occupied")
+  const { profile, worker, authorization, doc, bytes, configuration, serviceIssuerKeyId } = input
+  const previous = parseAutomationApproval(existing.approval)
+  const priorBindings = { ...bindings, columns: { ...bindings.columns } }
+  if (!previous.grant.payload.automation.columns.applied) delete priorBindings.columns.applied
+  const approval = await existingAutomationApproval(existing, profile, worker, authorization, doc.id, priorBindings, bytes,
+    Boolean(configuration || serviceIssuerKeyId), serviceIssuerKeyId)
+  if (!serviceIssuerKeyId) return configuration ? { bindings, configuration } : { bindings: priorBindings, approval }
+  if (!isLegacyAutomationGrant(approval.grant)) return { bindings: priorBindings, approval }
+  const { name, type, typeVersion, parameters } = approval.definition.payload
+  const existingConfiguration = { name, type, typeVersion, parameters }
+  if (configuration && canonicalizeJson(configuration) !== canonicalizeJson(existingConfiguration)) {
+    throw new Error("Automation access upgrade must preserve the existing configuration")
+  }
+  return { bindings: priorBindings, configuration: existingConfiguration }
 }
 
 function configuredActivation(
@@ -148,19 +190,23 @@ function selectAutomationBindings(doc: WorkspaceDocumentV2) {
 
 async function existingAutomationApproval(existing: WorkspaceDocumentV2["entities"][string], profile: LocalProfile,
   worker: AutomationWorkerIdentity, authorization: AutomationAuthorization, workspaceId: string,
-  bindings: ReturnType<typeof selectAutomationBindings>, bytes: Uint8Array, renewal = false) {
+  bindings: ReturnType<typeof selectAutomationBindings>, bytes: Uint8Array, renewal = false, serviceIssuerKeyId?: string) {
     if (!hasEntityKind(existing, "automation") || existing.executor.personId !== worker.personId || existing.executor.origin !== worker.origin) {
       throw new Error("Automation instance is already bound to another executor")
     }
     if (automationLifecycle(existing).state === "deleted") throw new Error("Deleted automation cannot be reactivated")
     const approval = parseAutomationApproval(existing.approval)
+    const grant = approval.grant
+    if (!isLegacyAutomationGrant(grant) && serviceIssuerKeyId !== grant.payload.automation.service.issuerKeyId) {
+      throw new Error("Standing service approval belongs to another Rusty issuer")
+    }
     const epochChanged = approval.grant.payload.accessEpoch !== authorization.authority.currentEpoch
-    if (epochChanged && !renewal) throw new Error("Workspace owner authority changed; review and renew this automation approval")
+    if (epochChanged && (!renewal || !isLegacyAutomationGrant(grant))) throw new Error("Workspace owner authority changed; review and renew this automation approval")
     const owner = await existingApprovalIssuer(profile, authorization, workspaceId, bytes,
       approval.grant.payload.accessEpoch, renewal)
     await verifyAutomationDefinition(approval.definition, { workspaceId, boardId: bindings.boardId,
       grantId: approval.grant.payload.grantId, signerKeyId: approval.grant.signerKeyId }, owner)
-    const validGrant = await verifyExistingGrant(approval, owner, renewal)
+    const validGrant = await verifyExistingGrant(grant, owner, renewal)
     if (!validGrant ||
       approval.grant.payload.personId !== worker.personId || canonicalizeJson(approval.grant.payload.automation.columns) !== canonicalizeJson(bindings.columns) ||
       canonicalizeJson([...approval.grant.payload.automation.fieldIds].sort()) !== canonicalizeJson(Object.values(bindings.fieldIds).sort())) {
@@ -182,13 +228,16 @@ async function existingApprovalIssuer(profile: LocalProfile, authorization: Auto
   return history.issuer
 }
 
-async function verifyExistingGrant(approval: ReturnType<typeof parseAutomationApproval>,
+async function verifyExistingGrant(grant: LegacyAutomationGrant | StandingAutomationWorkspaceGrant,
   owner: { personId: string; publicKey: string; certificates: DeviceCertificate[] }, renewal: boolean): Promise<boolean> {
-  const key = approval.grant.signerKeyId === owner.personId ? owner.publicKey
-    : owner.certificates.find(value => value.payload.deviceId === approval.grant.signerKeyId)?.payload.devicePublicKey
+  const key = grant.signerKeyId === owner.personId ? owner.publicKey
+    : owner.certificates.find(value => value.payload.deviceId === grant.signerKeyId)?.payload.devicePublicKey
   if (!key) return false
   // Expired proof establishes the previous contract, never present execution rights.
-  return renewal ? verifyEnvelope(approval.grant, key) : verifyWorkspaceGrant(approval.grant, key)
+  if (renewal || !isLegacyAutomationGrant(grant)) {
+    return verifyEnvelope<WorkspaceGrant["payload"] | StandingAutomationWorkspaceGrant["payload"]>(grant, key)
+  }
+  return verifyWorkspaceGrant(grant, key)
 }
 
 function captureActivationInput<A extends AutomationAuthorization, B extends { workspaceId: string }>(input: AutomationActivationInput<A, B>): AutomationActivationInput<A, B> {

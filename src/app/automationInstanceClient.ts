@@ -18,7 +18,8 @@ const maxResponseBytes = 384 * 1024
 const actionSchema = z.enum(["discover", "identity", "activate", "refresh-access", "prepare-storage-rotation", "rotate-storage", "prepare-history-baseline", "activate-history-baseline"])
 const actionsSchema = z.array(actionSchema).max(32).refine(values => new Set(values).size === values.length)
 const instanceManagementSchema = z.strictObject({ version: z.number().int().positive().optional(), actions: actionsSchema.optional() })
-const receiptSchema = z.strictObject({ status: z.enum(["active", "paused", "deleted"]), synced: z.literal(true) })
+const receiptSchema = z.strictObject({ status: z.enum(["active", "paused", "deleted"]), synced: z.literal(true),
+  access: z.strictObject({ state: z.literal("ready"), mode: z.literal("service"), credentialExpiresAt: z.number().int().positive() }).optional() })
 
 export class UnsupportedAutomationInstanceManagementError extends Error {
   constructor() {
@@ -27,9 +28,11 @@ export class UnsupportedAutomationInstanceManagementError extends Error {
   }
 }
 
+export type AutomationInstanceRelay = (action: "identity" | "activate", instanceRequest: unknown, body: unknown) => Promise<unknown>
 export type AutomationInstanceClientGuards = {
   currentAuthority?: () => Promise<string>
   ensureCurrent?: () => void | Promise<void>
+  relay?: AutomationInstanceRelay
 }
 export type AutomationInstanceDiscoveryInput = { origin: string; workspaceId: string; definitionId: string; executorPersonId: string }
 export type AutomationInstanceReadInput = AutomationInstanceDiscoveryInput & { integrationId: string }
@@ -249,10 +252,13 @@ export async function activateExistingAutomation(profile: LocalProfile, inputVal
 async function send(profile: LocalProfile, input: AutomationInstanceDiscoveryInput, action: AutomationInstanceAction,
   body: unknown, guards?: AutomationInstanceClientGuards): Promise<{ value: unknown; request: Awaited<ReturnType<typeof signRequest>> }> {
   await guards?.ensureCurrent?.()
-  await assertSupported(input.origin, action)
+  const relay = guards?.relay
+  if (relay && action !== "identity" && action !== "activate") throw new Error("Unsupported Reflux instance operation")
+  if (!relay) await assertSupported(input.origin, action)
   const request = await signRequest(profile, input, action, body, guards)
   await guards?.ensureCurrent?.()
-  const value = await requestJson(input.origin, `/v2/automation-instances/${action}`, "POST", { instanceRequest: request, body })
+  const value = relay && (action === "identity" || action === "activate") ? await relay(action, request, body)
+    : await requestJson(input.origin, `/v2/automation-instances/${action}`, "POST", { instanceRequest: request, body })
   await guards?.ensureCurrent?.()
   return { value, request }
 }

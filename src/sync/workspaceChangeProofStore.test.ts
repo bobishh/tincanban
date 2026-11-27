@@ -48,3 +48,17 @@ it("retains distinct signed grant provenance variants for one change proof", asy
 
   expect((await records(workspaceId)).map(record => record.grant?.signature).sort()).toEqual(["new-grant", "old-grant"])
 })
+
+it("retains independently issued attestations for the same automation proof", async () => {
+  const workspaceId = `proof-operation-variants-${crypto.randomUUID()}`
+  const shared = { signed: { signature: "same-proof" }, grant: { signature: "same-grant" },
+    publicKey: "service-key", certificates: [], ownerPublicKey: "owner-key", ownerCertificates: [] }
+  const attestation = (signature: string) => ({ ...shared, automationOperation: {
+    issuerPublicKey: "issuer-key", credential: { signature },
+  } }) as unknown as WorkspaceChangeAuthorization
+  const first = attestation("first-attestation")
+  const retry = attestation("retry-attestation")
+  await putRecords(workspaceId, [first])
+  await expect(putRecords(workspaceId, [retry])).resolves.toBe(true)
+  expect(await records(workspaceId)).toEqual([first, retry])
+})

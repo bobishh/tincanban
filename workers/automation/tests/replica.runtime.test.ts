@@ -6,7 +6,7 @@ import { receiptAi } from "./receiptFixture";
 import * as Automerge from "@automerge/automerge/slim";
 import automergeWasm from "@automerge/automerge/automerge.wasm";
 import { initSync, WasmStateCore } from "@meta-uber/mesh-transport/wasm";
-import { profileFromIdentitySeedForDevice, signEnvelope } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index";
+import { canonicalizeJson, createLocalRootIdentityAuthorityView, emptyIdentityProfileState, profileFromIdentitySeedForDevice, signEnvelope } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index";
 import { createWorkspaceDoc } from "../../../src/test/boardFixture";
 import { createAutomationWorkspaceGrant } from "../../../src/domain/proofs";
 import { executeCommand as executeCommandWithoutSigningContext } from "../../../src/domain/commands";
@@ -19,7 +19,7 @@ import { automationEntityId } from "../../../src/domain/automationLifecycle";
 import { isItem, type WorkspaceDocumentV2 } from "../../../src/domain/model";
 import { planApplicationMove } from "../src/applicationMove";
 import type { ApplicationBindingProof } from "../../../src/domain/applicationBinding";
-import { createWorkspaceDeviceRevocation, createWorkspaceOwnershipTransfer } from "../../../vendor/meta-mesh/packages/mesh-workspace/src/index";
+import { createStandingAutomationWorkspaceGrant, createWorkspaceDeviceRevocation, createWorkspaceOwnershipTransfer } from "../../../vendor/meta-mesh/packages/mesh-workspace/src/index";
 import { applicationBindingEventHash, hashApplicationBindingDecision } from "../src/applicationBindingEvidence";
 import { readApplicationBindingAudit, readApplicationBindingHistory } from "../src/applicationBindingStore";
 import { CLEF_MODEL, APPLICATION_EVENT_POLICY_VERSION } from "../src/clef";
@@ -1499,6 +1499,94 @@ it.each([false, true])("Given a signed email scope renewal with rotated storage=
   expect(renewed.allowsSource("email")).toBe(true);
   expect(await renewed.createLead("renewal-lead", { company: "Example GmbH", role: "Senior Engineer" }, {})).toEqual({ cardId: created.cardId, duplicate: true });
   Automerge.free(document); Automerge.free(changed.value.newDoc);
+});
+
+it("Given an expired participant, when standing access replaces its contract, then the same executor can renew and attest a write while the owner is offline", async () => {
+  const data = await typedFixture();
+  const prior = await AutomationReplica.activate(data.packet, data.automation);
+  const original = await prior.createLead("legacy-event", { company: "Existing company", role: "Existing role" }, {});
+  const stored = prior.serialize();
+  const signer = await receiptSigner();
+  const actor = data.automation;
+  const view = await createLocalRootIdentityAuthorityView(actor, { certificates: [actor.certificate], revocations: [] },
+    emptyIdentityProfileState(actor.identity.personId));
+  const { expiresAt, ...boardScope } = data.packet.grant.payload.automation!;
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(expiresAt + 1);
+  try {
+    const grant = await createStandingAutomationWorkspaceGrant(data.owner, {
+      workspaceId: data.packet.workspaceId, personId: actor.identity.personId,
+      scope: { ...boardScope, service: { version: 1, definitionId: data.packet.definition!.payload.id, issuerKeyId: signer.serviceId } },
+    });
+    const definitionPayload = { ...data.packet.definition!.payload,
+      scope: { ...data.packet.definition!.payload.scope, grantId: grant.payload.grantId } };
+    const definition = await signEnvelope(data.owner.privateKeys.devicePrivateKey, definitionPayload, data.owner.device.deviceId);
+    const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(data.packet.initial.document));
+    const configured = await executeCommand(document, { kind: "configureAutomation", definition: definitionPayload,
+      approval: JSON.stringify({ definition, grant }) }, data.owner);
+    if (!configured.ok) throw new Error(configured.error.message);
+    const initial = await ownerSnapshot(configured.value.newDoc, data.owner, data.packet);
+    Automerge.free(document);
+    Automerge.free(configured.value.newDoc);
+    const blind = { ...data.packet.blind, readToken: "", writeToken: "" };
+    const issued: Array<{ expiresAt: number; operation?: { kind: string; signature: string } }> = [];
+    let issueStatus = 200;
+    vi.stubGlobal("fetch", async (target: string, init: RequestInit) => {
+      const url = new URL(target);
+      if (url.origin !== blind.origin) throw new Error("Unexpected runtime target");
+      if (url.pathname === `/v2/identity/authority/${actor.identity.personId}/status`) {
+        const requestHash = await blindHash(new TextEncoder().encode(canonicalizeJson({ method: "GET", path: url.pathname + url.search })));
+        return Response.json({ status: await signEnvelope(signer.pair.privateKey, { kind: "rusty-identity-authority-status", version: 1,
+          serviceId: signer.serviceId, origin: blind.origin, personId: actor.identity.personId,
+          requestNonce: url.searchParams.get("nonce"), requestHash, issuedAt: Date.now(), state: "ready", view,
+          enforcement: { mode: "additive", epoch: 0 } }, signer.serviceId, "RUSTY/2") });
+      }
+      if (url.pathname !== `/v2/scopes/${blind.scopeId}/credentials` || init.method !== "POST") {
+        throw new Error("Unexpected automation request");
+      }
+      expect(new Headers(init.headers).get("x-rusty-identity-proof")).toBeTruthy();
+      if (issueStatus !== 200) return Response.json({}, { status: issueStatus });
+      const operation = init.body ? JSON.parse(String(init.body)).operation : undefined;
+      const evidence = await signEnvelope(signer.pair.privateKey, { kind: "automation-service-credential", version: 1,
+        grantId: grant.payload.grantId, approvalSignature: grant.signature, deviceId: actor.device.deviceId,
+        scopeId: blind.scopeId, authorityRevision: 2, issuedAt: Date.now(), expiresAt: Date.now() + 300_000,
+        ...(operation ? { operation } : {}) }, signer.serviceId, "MESH-AUTOMATION-SERVICE/1");
+      issued.push(evidence.payload);
+      return Response.json({ credential: `ac1.${encodeBlindBytes(new TextEncoder().encode(JSON.stringify(evidence)))}` });
+    });
+    await expect(AutomationReplica.restore(stored, actor, async () => {})).rejects.toThrow(/expired/i);
+    const transport = capturedRuntimeTransport();
+    const upgraded = await AutomationReplica.renew(stored, { ...data.packet, blind, grant, definition, initial, transport }, actor,
+      "https://automation.example.test");
+    const upgradedState = upgraded.serialize();
+    expect(JSON.parse(upgradedState).grant.payload).toMatchObject({ personId: actor.identity.personId, grantId: grant.payload.grantId });
+    expect(upgradedState).not.toContain("ac1.");
+    const active = await AutomationReplica.restore(upgradedState, actor, async () => {}, transport);
+    const firstExpiry = issued.at(-1)!.expiresAt;
+    vi.setSystemTime(firstExpiry + 1);
+    await active.sync();
+    const { cardId } = await active.createLead("standing-participant-lead", { company: "Example GmbH", role: "Engineer" }, {});
+    const proof = JSON.parse(active.serialize()).authorizations.find((record: { automationOperation?: unknown }) => record.automationOperation);
+    expect(active.candidates().map(candidate => candidate.cardId)).toContain(cardId);
+    expect(issued.some(credential => !credential.operation && credential.expiresAt > firstExpiry)).toBe(true);
+    expect(issued.at(-1)?.operation).toEqual({ kind: "workspace-changes", signature: proof.signed.signature });
+    await expect(active.createLead("legacy-event", { company: "Existing company", role: "Existing role" }, {}))
+      .resolves.toEqual({ cardId: original.cardId, duplicate: true });
+    const summary = await active.postSummary("run-summary", "Run finished");
+    const message = JSON.parse(active.serialize()).chat.messages.find((record: { signed: { payload: { id: string } } }) =>
+      record.signed.payload.id === summary.messageId);
+    expect(issued.at(-1)?.operation).toEqual({ kind: "chat-message", signature: message.signed.signature });
+    issueStatus = 503;
+    await expect(active.sync()).rejects.toMatchObject({ state: "unavailable" });
+    expect(() => active.candidates()).toThrow(/authorize/i);
+    issueStatus = 200;
+    await expect(active.sync()).resolves.toBeUndefined();
+    issueStatus = 403;
+    await expect(active.sync()).rejects.toMatchObject({ state: "denied" });
+  } finally {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  }
 });
 
 it("Given an expired but intact prior grant and a fresh owner renewal, When renewing, Then retain paused controls and durable event state", async () => {

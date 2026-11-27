@@ -19,12 +19,17 @@ import { parseAutomationDefinition, type AutomationDefinition } from "../../../s
 import { verifyAutomationDefinition } from "../../../src/domain/automationDefinitionProof";
 import { automationEntityId, automationLifecycle, type AutomationDesiredState } from "../../../src/domain/automationLifecycle";
 import { parseAutomationApproval } from "../../../src/domain/automationApproval";
+import { createLocalRootIdentityAuthorityView, emptyIdentityProfileState, signEnvelope } from "@meta-uber/mesh-identity";
+import { parseStandingAutomationGrantScope, type StandingAutomationGrantScope, type StandingAutomationWorkspaceGrant } from "@meta-uber/mesh-workspace";
+import { publishRustyIdentityAuthorityView, readRustyIdentityAuthorityStatus } from "@meta-uber/mesh-replication/rusty-identity-authority";
+import { createRustyAutomationCredentials, RustyAutomationAccessError,
+  type RustyAutomationCredential } from "@meta-uber/mesh-replication/rusty-automation-credentials";
 import { itemWorkflow, workflowColumnId } from "../../../src/domain/archive";
 import { hasEntityKind, isItem, type AutomationGrantScope, type WorkspaceDocumentV2, type WorkspaceGrant } from "../../../src/domain/model";
 import { rustyHash as blindHash, downloadRustyObject as downloadBlindObject, inventoryRustyObjects as inventoryBlindObjects,
   uploadRustyObject as uploadBlindObject, verifyRustyStorageReceipt as verifyBlindReceipt,
   decodeBlindBytes, decryptBlindObject, encodeBlindBytes, encryptBlindObject,
-  type RustyReplicaAccess as BlindAccess, type RustyStorageReceipt as BlindReceipt, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica";
+  type RustyReplicaAccess as BlindAccess, type RustyStorageReceipt as BlindReceipt, type BlindObject, type RustyFetch } from "@meta-uber/mesh-replication/rusty-replica";
 import type { BlindReplicaConfig } from "../../../src/product-replica";
 import { ReplicaEngine, emptyReplicaState, parseReplicaState, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine";
 import { captureApplicationSource } from "./applicationSourceCapture";
@@ -70,6 +75,15 @@ export class AutomationControlError extends Error {
   constructor(readonly state: "paused" | "deleted") { super(`Automation is ${state}`); }
 }
 
+class LegacyAutomationAccessError extends Error {
+  constructor(message = "Automation grant has expired") { super(message); }
+}
+
+export function automationAccessFailure(error: unknown) {
+  if (error instanceof LegacyAutomationAccessError) return "expired" as const;
+  if (error instanceof RustyAutomationAccessError) return error.state;
+}
+
 export type AutomationFieldBindings = {
   company: string;
   role: string;
@@ -98,8 +112,8 @@ export type AutomationInitialSnapshot = {
 export type ReplicaTransport = {
   inventory: typeof inventoryBlindObjects;
   download: typeof downloadBlindObject;
-  upload: (access: BlindAccess, object: BlindObject, requestId?: string, observedSequence?: number) => Promise<BlindReceipt>;
-  archive?: (access: BlindAccess, guard: () => void | Promise<void>) => HistoryBaselineFetchPort;
+  upload: (access: BlindAccess, object: BlindObject, requestId?: string, observedSequence?: number, fetcher?: RustyFetch) => Promise<BlindReceipt>;
+  archive?: (access: BlindAccess, guard: () => void | Promise<void>, fetcher?: RustyFetch) => HistoryBaselineFetchPort;
   publicDelivery?: typeof deliverPublicBoard;
   receiptVerified?: (receipt: BlindReceipt, object: BlindObject, requestId: string,
     includedEvents: Readonly<Record<string, { changeHash?: string }>>) => Promise<void>;
@@ -116,7 +130,7 @@ export type AutomationManagementInspector = {
   assertOwner: (identity: WorkspaceWriteAuthorityEvidence["currentOwner"], deviceId: string) => void;
   describe: (origin: string, workspaceId: string, definitionId: string) => {
     workspaceId: string; boardId: string; definitionId: string | null; executorPersonId: string;
-    grantId: string; expiresAt: number; state: AutomationDesiredState; adoptionRequired: boolean;
+    grantId: string; expiresAt: number | null; serviceAccessVersion: 1; state: AutomationDesiredState; adoptionRequired: boolean;
     historyUsage: ActiveHistoryUsage & { archiveRequired: boolean };
     storage: { origin: string; scopeId: string; keyEpoch: number; servicePublicKey: string;
       policyRevision: number; minimumWriterVersion?: 2 };
@@ -124,12 +138,29 @@ export type AutomationManagementInspector = {
   serialize: () => string;
 };
 
+type AutomationExecutionGrant = WorkspaceGrant | StandingAutomationWorkspaceGrant;
+
+function isStandingGrant(grant: AutomationExecutionGrant): grant is StandingAutomationWorkspaceGrant {
+  const scope = grant.payload.automation;
+  return Boolean(scope && "service" in scope);
+}
+
+export function automationGrantExpiry(grant: AutomationExecutionGrant): number | null {
+  return isStandingGrant(grant) ? null : grant.payload.automation?.expiresAt ?? null;
+}
+
+function assertLegacyGrantCurrent(grant: AutomationExecutionGrant): void {
+  if (!isStandingGrant(grant) && Date.now() >= grant.payload.automation!.expiresAt) {
+    throw new LegacyAutomationAccessError();
+  }
+}
+
 export type AutomationActivationPacket = {
   version: 1 | 2;
   definition?: SignedEnvelope<AutomationDefinition>;
   workspaceId: string;
   blind: BlindReplicaConfig;
-  grant: WorkspaceGrant;
+  grant: AutomationExecutionGrant;
   bindings: AutomationReplicaBindings;
   initial: AutomationInitialSnapshot;
   /** Durable Object callback; awaited before any outbound network upload. */
@@ -229,7 +260,7 @@ type SerializedReplica = {
   scopeAuthoritySnapshot?: unknown;
   workspaceId: string;
   blind: BlindReplicaConfig;
-  grant: WorkspaceGrant;
+  grant: AutomationExecutionGrant;
   definition?: SignedEnvelope<AutomationDefinition>;
   tombstoned?: true;
   bindings: AutomationReplicaBindings;
@@ -248,12 +279,10 @@ type WireSnapshot = { version: 1 | 2; history?: WireHistoryBaseline; workspaceId
 
 const defaultTransport: ReplicaTransport = {
   publicDelivery: input => deliverPublicBoard({ ...input, client: "automation", http: automationPublicDeliveryHttp }),
-  inventory: (access, after) => inventoryBlindObjects({ ...access, client: "automation", clientBuild: undefined }, after,
-    automationPublicDeliveryHttp.request),
-  download: (access, id) => downloadBlindObject({ ...access, client: "automation", clientBuild: undefined }, id,
-    automationPublicDeliveryHttp.request),
-  upload: (access, object, requestId = crypto.randomUUID(), observedSequence) => uploadBlindObject({ ...access, client: "automation", clientBuild: undefined }, object, requestId, observedSequence,
-    automationPublicDeliveryHttp.request),
+  inventory: (access, after, fetcher = automationPublicDeliveryHttp.request) => inventoryBlindObjects({ ...access, client: "automation", clientBuild: undefined }, after, fetcher),
+  download: (access, id, fetcher = automationPublicDeliveryHttp.request) => downloadBlindObject({ ...access, client: "automation", clientBuild: undefined }, id, fetcher),
+  upload: (access, object, requestId = crypto.randomUUID(), observedSequence, fetcher = automationPublicDeliveryHttp.request) =>
+    uploadBlindObject({ ...access, client: "automation", clientBuild: undefined }, object, requestId, observedSequence, fetcher),
 };
 
 /** Hosts may journal a storage acknowledgement only after the shared verifier accepts it. */
@@ -282,17 +311,19 @@ export class AutomationReplica {
   private tombstoned: boolean;
   private running: Promise<unknown> = Promise.resolve();
   private deviceAccessCache = new Map<string, { raw: string; authority: WorkspaceWriteAuthorityEvidence;
-    grant: WorkspaceGrant | undefined; checkedAt: number; role: ReturnType<typeof WasmStateCore.decideWorkspaceAccess> }>();
+    grant: AutomationExecutionGrant | undefined; credential?: RustyAutomationCredential; checkedAt: number; role: ReturnType<typeof WasmStateCore.decideWorkspaceAccess> }>();
   private admissionCache?: { rawDocument: string; authorizations: WorkspaceChangeAuthorization[];
     authority: WorkspaceWriteAuthorityEvidence; result: WorkspaceAdmissionResult;
     control?: { state: AutomationDesiredState; heads: string[] } };
   private sealedAdmission?: ReplicaAdmissionCache;
+  private serviceClient?: Promise<ReturnType<typeof createRustyAutomationCredentials>>;
+  private serviceCredential?: RustyAutomationCredential;
 
   private constructor(
     private readonly profile: LocalProfile,
     private readonly workspaceId: string,
     private readonly blind: BlindReplicaConfig,
-    private readonly grant: WorkspaceGrant,
+    private readonly grant: AutomationExecutionGrant,
     private readonly bindings: AutomationReplicaBindings,
     private authority: WorkspaceWriteAuthorityEvidence,
     cursor: number,
@@ -341,6 +372,7 @@ export class AutomationReplica {
     const replica = new AutomationReplica(profile, packet.workspaceId, { ...packet.blind }, packet.grant,
       packet.bindings, authorityFromAdmission, packet.blind.cursor, packet.blind.lastUploaded,
       packet.persist, packet.transport, undefined, parseOpaqueChat(packet.initial.chat));
+    await replica.confirmAccess();
     if (packet.initial.scopeAuthoritySnapshot) replica.scopeAuthoritySnapshot = validateWorkerHistoryAuthority(packet.initial.scopeAuthoritySnapshot,
       packet.workspaceId, authorityFromAdmission.currentOwner);
     if (packet.initial.history) {
@@ -385,9 +417,11 @@ export class AutomationReplica {
     if (new TextEncoder().encode(serialized).byteLength > 32 * 1024 * 1024) throw new Error("Serialized automation replica is too large");
     const prior = JSON.parse(serialized) as SerializedReplica;
     const priorBasis = await restoreSerializedHistory(prior, () => {});
-    await validateSerialized(prior, profile, "renewal", priorBasis);
-    priorBasis?.free();
-    if (canonicalizeJson(prior.history?.wire ?? null) !== canonicalizeJson(packet.initial.history ?? null)) {
+    try { await validateSerialized(prior, profile, "renewal", priorBasis); }
+    finally { priorBasis?.free(); }
+    const serviceUpgrade = !adoptLegacy && isStandingGrant(packet.grant) && !isStandingGrant(prior.grant);
+    const history = packet.initial.history ?? (serviceUpgrade ? prior.history?.wire : undefined);
+    if (canonicalizeJson(prior.history?.wire ?? null) !== canonicalizeJson(history ?? null)) {
       throw new Error("Synchronize the verified history basis before renewing automation approval");
     }
     if (adoptLegacy && (prior.definition || packet.version !== 2 || !packet.definition)) {
@@ -395,6 +429,7 @@ export class AutomationReplica {
     }
     if (prior.tombstoned || prior.workspaceId !== packet.workspaceId || prior.bindings.boardId !== packet.bindings.boardId ||
       !adoptLegacy && prior.definition?.payload.id !== packet.definition?.payload.id) throw new Error("Automation renewal must preserve its executor and workspace");
+    if (serviceUpgrade) assertStandingUpgrade(prior, packet);
     if (prior.blind.origin !== packet.blind.origin) throw new Error(`Automation renewal storage origin mismatch: expected ${prior.blind.origin}, received ${packet.blind.origin}`);
     const rotatedStorage = prior.blind.contentKey !== packet.blind.contentKey ||
       prior.blind.scopeId !== packet.blind.scopeId || prior.blind.keyEpoch !== packet.blind.keyEpoch;
@@ -402,7 +437,9 @@ export class AutomationReplica {
     let publish = false;
     const replica = await AutomationReplica.activate({ ...packet, persist: async value => {
       if (publish) await packet.persist!(value);
-    }, initial: { ...packet.initial, document: encodeBlindBytes(combined),
+    }, initial: { ...packet.initial, ...(history ? { history,
+      scopeAuthoritySnapshot: prior.scopeAuthoritySnapshot ?? packet.initial.scopeAuthoritySnapshot } : {}),
+      document: encodeBlindBytes(combined),
       authorization: normalizeBundle(packet.initial.authorization, prior.authorizations),
       chat: mergeOpaqueChat(prior.chat, packet.initial.chat),
       attachments: mergeAttachmentLocators(prior.attachments, packet.initial.attachments),
@@ -426,12 +463,13 @@ export class AutomationReplica {
     if (!persist) throw new Error("Automation restore requires durable replica persistence");
     if (new TextEncoder().encode(serialized).byteLength > 32 * 1024 * 1024) throw new Error("Serialized automation replica is too large");
     const value = JSON.parse(serialized) as SerializedReplica;
-    const basis = await restoreSerializedHistory(value, () => { if (Date.now() >= value.grant.payload.automation!.expiresAt) throw new Error("Automation grant has expired"); });
+    const basis = await restoreSerializedHistory(value, () => assertLegacyGrantCurrent(value.grant));
     await validateSerialized(value, profile, "restore", basis);
     const replica = new AutomationReplica(profile, value.workspaceId, { ...value.blind }, value.grant,
       value.bindings, value.authority, value.blind.cursor, value.blind.lastUploaded,
       persist, transport, value);
     replica.historyBasis = basis;
+    await replica.confirmAccess();
     const classification = await openReplicaAdmission(WasmStateCore.causalAdmissionPolicyId(), profile,
       replica.admissionEvidence(), value.admissionCache);
     let reusedAdmission = false;
@@ -670,7 +708,7 @@ export class AutomationReplica {
     }
     return { workspaceId: this.workspaceId, boardId: this.bindings.boardId,
       definitionId: this.definition?.payload.id ?? null, executorPersonId: this.profile.identity.personId,
-      grantId: this.grant.payload.grantId, expiresAt: this.grant.payload.automation!.expiresAt,
+      grantId: this.grant.payload.grantId, expiresAt: automationGrantExpiry(this.grant), serviceAccessVersion: 1 as const,
       state, adoptionRequired: !this.definition,
       historyUsage: { ...this.historyUsage, archiveRequired: historyBudgetExceeded(this.historyUsage) },
       storage: { origin: this.blind.origin, scopeId: this.blind.scopeId, keyEpoch: this.blind.keyEpoch,
@@ -685,7 +723,7 @@ export class AutomationReplica {
         "board.id": this.bindings.boardId,
         "operation.scope": "local-admission,serialization,transport,decrypt-merge,confirmation",
       }, async span => {
-        this.assertActive();
+        await this.confirmAccess();
         this.assertPersistence();
         if (this.progress.pending) {
           span?.setAttribute("replication.phase", "confirm-pending-upload");
@@ -748,7 +786,7 @@ export class AutomationReplica {
     normalized = structuredClone(normalized);
     decision = structuredClone(decision);
     return this.enqueue(async () => {
-      this.assertActive();
+      await this.confirmAccess();
       this.assertPersistence();
       await this.revalidate();
       this.assertExecuting();
@@ -815,7 +853,7 @@ export class AutomationReplica {
 
   moveCard(eventId: string, cardId: string, columnId: string, expectedWorkflow: ExpectedWorkflow): Promise<{ cardId: string; duplicate: boolean }> {
     return this.enqueue(async () => {
-      this.assertActive();
+      await this.confirmAccess();
       this.assertPersistence();
       await this.revalidate();
       this.assertExecuting();
@@ -865,7 +903,7 @@ export class AutomationReplica {
   appendEmailNote(eventId: string, cardId: string, mail: ForwardedMail): Promise<{ cardId: string; duplicate: boolean } | { review: string }> {
     mail = structuredClone(mail);
     return this.enqueue(async () => {
-      this.assertActive();
+      await this.confirmAccess();
       this.assertPersistence();
       await this.revalidate();
       this.assertExecuting();
@@ -955,6 +993,12 @@ export class AutomationReplica {
     } finally { Automerge.free(document); }
   }
 
+  accessObservationForRuntime() {
+    this.assertActive();
+    return { state: "ready" as const, mode: isStandingGrant(this.grant) ? "service" as const : "legacy" as const,
+      credentialExpiresAt: this.executionExpiry() };
+  }
+
   discoveryContext() {
     this.assertActive();
     return { version: 1, workspaceId: this.workspaceId, boardId: this.bindings.boardId,
@@ -968,7 +1012,7 @@ export class AutomationReplica {
 
   postSummary(key: string, text: string): Promise<{ messageId: string }> {
     return this.enqueue(async () => {
-      this.assertActive(); this.assertPersistence();
+      await this.confirmAccess(); this.assertPersistence();
       await this.revalidate(); this.assertExecuting();
       const document = this.admittedDocument();
       let room: string;
@@ -988,7 +1032,9 @@ export class AutomationReplica {
       const signed = await signWithContext(context, { kind: "chat-message" as const, version: 1 as const,
         workspaceId: room, personId: this.profile.identity.personId, deviceId: this.profile.device.deviceId,
         id: messageId, createdAt: new Date().toISOString(), text, revision: 0 });
-      const record = { signed, publicKey: evidence.identity.publicKey, certificates: evidence.certificates,
+      const automationOperation = isStandingGrant(this.grant)
+        ? await (await this.credentials()).attest({ kind: "chat-message", signature: signed.signature }) : undefined;
+      const record = { signed, ...(automationOperation ? { automationOperation } : {}), publicKey: evidence.identity.publicKey, certificates: evidence.certificates,
         authority: { publicKey: this.authority.currentOwner.publicKey, certificates: this.authority.currentOwner.certificates,
           grant: this.grant } };
       const chat = previous ?? { version: 1 as const, messages: [], profiles: [], typing: [] };
@@ -1080,33 +1126,36 @@ export class AutomationReplica {
     }
   }
 
-  private deviceRoleForRuntime(identity: WorkspaceWriteAuthorityEvidence["currentOwner"], deviceId: string, grant?: WorkspaceGrant) {
+  private deviceRoleForRuntime(identity: WorkspaceWriteAuthorityEvidence["currentOwner"], deviceId: string, grant?: AutomationExecutionGrant) {
     const authority = this.authority, now = Date.now();
     const key = canonicalizeJson([identity.personId, identity.publicKey, deviceId,
       identity.certificates.map(value => canonicalizeJson(value)).sort()]);
     const cached = this.deviceAccessCache.get(key);
-    const expiresAt = grant?.payload.automation?.expiresAt ?? Infinity;
-    if (cached && cached.raw === this.rawDocument && cached.authority === authority && cached.grant === grant &&
+    const credential = grant && isStandingGrant(grant) ? this.serviceCredential : undefined;
+    const expiresAt = credential?.expiresAt ?? (grant && !isStandingGrant(grant) ? grant.payload.automation?.expiresAt : undefined) ?? Infinity;
+    if (cached && cached.raw === this.rawDocument && cached.authority === authority && cached.grant === grant && cached.credential === credential &&
       cached.checkedAt <= now && now < expiresAt) return cached.role;
     const role = WasmStateCore.decideWorkspaceAccess({ snapshot: { workspaceId: this.workspaceId,
       genesisOwner: authority.genesisOwner, genesisEpoch: authority.genesisEpoch, expectedCurrentOwner: authority.currentOwner,
       document: Array.from(decodeBlindBytes(this.rawDocument)), ownershipTransfers: authority.ownershipTransfers,
       successionClaims: authority.successionClaims, revocations: authority.revocations,
       deviceRevocations: authority.deviceRevocations, departures: authority.departures },
-    identity, deviceId, grant, departures: authority.departures, legacyAuthorityEvidence: [] }, now);
-    this.deviceAccessCache.set(key, { raw: this.rawDocument, authority, grant, checkedAt: now, role });
+    identity, deviceId, grant, departures: authority.departures, legacyAuthorityEvidence: [] }, now,
+      credential && { credential: credential.evidence, issuerPublicKey: this.blind.servicePublicKey, scopeId: this.blind.scopeId });
+    this.deviceAccessCache.set(key, { raw: this.rawDocument, authority, grant, credential, checkedAt: now, role });
     if (this.deviceAccessCache.size > 16) this.deviceAccessCache.delete(this.deviceAccessCache.keys().next().value!);
     return role;
   }
 
   /** Observation signatures use complete certificate evidence and current admitted device authority. */
   async signObservationForRuntime(origin: string, nonce: string): Promise<AutomationObservationProof> {
+    await this.confirmAccess();
     const captured = { raw: this.rawDocument, authority: this.authority, grant: this.grant };
     const payload = this.observationForRuntime(origin, nonce);
     const revision = canonicalizeJson([this.grant.signature, this.authority.currentEpoch, payload.state, payload.heads]);
     const context = await resolveSigningContext({ profile: this.profile, certificates: [this.profile.certificate],
       purpose: payload.kind, binding: { origin, nonce, workspaceId: this.workspaceId, integrationId: payload.integrationId,
-        grantId: payload.grantId }, authorityRevision: revision, expiresAt: this.grant.payload.automation!.expiresAt,
+        grantId: payload.grantId }, authorityRevision: revision, expiresAt: this.executionExpiry(),
       current: async () => {
         this.assertActive();
         if (captured.raw !== this.rawDocument || captured.authority !== this.authority || captured.grant !== this.grant) {
@@ -1210,7 +1259,7 @@ export class AutomationReplica {
   }
 
   private async deliverPublicChanges(diagnosticContext?: Context): Promise<void> {
-    if (!this.transport.publicDelivery || this.tombstoned || this.controlForRuntime().state !== "active") return;
+    if (!this.transport.publicDelivery || isStandingGrant(this.grant) || this.tombstoned || this.controlForRuntime().state !== "active") return;
     const document = this.admittedDocument();
     const board = document.entities[this.bindings.boardId];
     if (!hasEntityKind(board, "board")) return;
@@ -1285,6 +1334,8 @@ export class AutomationReplica {
   }
 
   private createEngine(managementGuard?: () => Promise<void>): ReplicaEngine<Uint8Array, BlindObject, BlindReceipt> {
+    const fetcher = this.storageFetcher();
+    const requestOptions: [RustyFetch] | [] = fetcher ? [fetcher] : [];
     return new ReplicaEngine(this.progress.binding, {
       repository: {
         read: async () => this.progress,
@@ -1302,9 +1353,9 @@ export class AutomationReplica {
         seal: plaintext => encryptBlindObject(this.blind.scopeId, this.blind.keyEpoch, decodeBlindBytes(this.blind.contentKey), plaintext),
       },
       transport: {
-        inventory: cursor => this.transport.inventory({ ...this.blind }, cursor),
-        download: id => this.transport.download({ ...this.blind }, id),
-        upload: (object, requestId, observedSequence) => this.transport.upload({ ...this.blind }, object, requestId, observedSequence),
+        inventory: cursor => this.transport.inventory({ ...this.blind }, cursor, ...requestOptions),
+        download: id => this.transport.download({ ...this.blind }, id, ...requestOptions),
+        upload: (object, requestId, observedSequence) => this.transport.upload({ ...this.blind }, object, requestId, observedSequence, ...requestOptions),
       },
       admit: object => this.receiveSnapshot(object, managementGuard),
       observe: (_event, detail) => {
@@ -1319,7 +1370,7 @@ export class AutomationReplica {
       },
       guard: async () => {
         if (managementGuard) await managementGuard();
-        else this.assertActive();
+        else await this.confirmAccess(false);
         this.assertPersistence();
         if (this.storageBinding() !== this.progress.binding) throw new Error("Rusty credential binding changed during replication");
       },
@@ -1327,8 +1378,8 @@ export class AutomationReplica {
   }
 
   private archiveReader(guard: () => void | Promise<void>): HistoryBaselineFetchPort {
-    if (this.transport.archive) return this.transport.archive({ ...this.blind }, guard);
-    const remote = createArchiveRemote({ ...this.blind }, { fetch, ensureCurrent: guard });
+    if (this.transport.archive) return this.transport.archive({ ...this.blind }, guard, this.storageFetcher());
+    const remote = createArchiveRemote({ ...this.blind }, { fetch: this.storageFetcher() ?? fetch, ensureCurrent: guard });
     return { download: id => remote.download(id), ensureCurrent: guard };
   }
 
@@ -1542,7 +1593,10 @@ export class AutomationReplica {
       kind: "workspace-changes" as const, version: 1 as const, workspaceId: this.workspaceId,
       hashes: [changeHash], personId: this.profile.identity.personId, deviceId: this.profile.device.deviceId,
     });
+    const automationOperation = isStandingGrant(this.grant)
+      ? await (await this.credentials()).attest({ kind: "workspace-changes", signature: signed.signature }) : undefined;
     const nextAuthorizations = mergeAuthorizationRecords(this.authorizations, [{ signed,
+      ...(automationOperation ? { automationOperation } : {}),
       publicKey: evidence.identity.publicKey, certificates: evidence.certificates, grant: this.grant,
       ownerPublicKey: this.authority.currentOwner.publicKey,
       ownerCertificates: this.authority.currentOwner.certificates }]);
@@ -1564,7 +1618,7 @@ export class AutomationReplica {
     const captured = { raw: this.rawDocument, authority: this.authority, grant: this.grant, revision: this.contentRevision,
       key: this.profile.privateKeys.devicePrivateKey, certificate: canonicalizeJson(this.profile.certificate) };
     return resolveSigningContext({ profile: this.profile, certificates: [this.profile.certificate], purpose, binding,
-      authorityRevision: captured.revision, expiresAt: this.grant.payload.automation!.expiresAt, current: async () => {
+      authorityRevision: captured.revision, expiresAt: this.executionExpiry(), current: async () => {
         this.assertActive(); this.assertExecuting();
         if (captured.raw !== this.rawDocument || captured.authority !== this.authority || captured.grant !== this.grant ||
           captured.revision !== this.contentRevision || captured.key !== this.profile.privateKeys.devicePrivateKey ||
@@ -1598,8 +1652,64 @@ export class AutomationReplica {
     return sha256Base64Url(new TextEncoder().encode(canonicalizeJson(this.grant)));
   }
 
+  private credentials() {
+    this.serviceClient ??= this.connectCredentialIssuer().catch((error: unknown) => {
+      this.serviceClient = undefined;
+      throw new RustyAutomationAccessError("unavailable", error);
+    });
+    return this.serviceClient;
+  }
+
+  private async connectCredentialIssuer() {
+    const { identity, device, certificate, privateKeys } = this.profile;
+    const { origin, servicePublicKey, scopeId } = this.blind;
+    const deviceRequest = { origin, servicePublicKey, identity, deviceId: device.deviceId, devicePublicKey: device.publicKey };
+    const status = await readRustyIdentityAuthorityStatus(deviceRequest);
+    let view = status.payload.view;
+    if (!view) {
+      view = await createLocalRootIdentityAuthorityView(this.profile, { certificates: [certificate], revocations: [] },
+        emptyIdentityProfileState(identity.personId));
+      await publishRustyIdentityAuthorityView({ ...deviceRequest, view,
+        signAuthorization: payload => signEnvelope(privateKeys.devicePrivateKey, payload, device.deviceId) });
+    }
+    return createRustyAutomationCredentials({ ...deviceRequest, scopeId, view, workspaceId: this.workspaceId,
+      grantId: this.grant.payload.grantId, approvalSignature: this.grant.signature, policyEpoch: this.grant.payload.accessEpoch!,
+      signAuthorization: payload => signEnvelope(privateKeys.devicePrivateKey, payload, device.deviceId) });
+  }
+
+  private storageFetcher(): RustyFetch | undefined {
+    if (isStandingGrant(this.grant)) return async (url, init) => (await this.credentials()).fetch(url, init);
+  }
+
+  private async confirmAccess(verifyIssuer = true): Promise<void> {
+    if (isStandingGrant(this.grant)) {
+      try {
+        const credentials = await this.credentials();
+        this.serviceCredential = await (verifyIssuer ? credentials.confirm() : credentials.get());
+      }
+      catch (error) {
+        this.serviceCredential = undefined;
+        this.serviceClient = undefined;
+        throw error;
+      }
+    }
+    this.assertActive();
+  }
+
+  private executionExpiry(): number {
+    return isStandingGrant(this.grant) ? this.serviceCredential?.expiresAt ?? 0 : this.grant.payload.automation!.expiresAt;
+  }
+
   private assertActive(): void {
-    if (Date.now() >= this.grant.payload.automation!.expiresAt) throw new Error("Automation grant has expired");
+    assertLegacyGrantCurrent(this.grant);
+    if (!isStandingGrant(this.grant)) return;
+    if (this.executionExpiry() <= Date.now() || this.grant.payload.accessEpoch !== this.authority.currentEpoch) {
+      throw new RustyAutomationAccessError("denied");
+    }
+    const { identity, device, certificate } = this.profile;
+    if (this.rawDocument && this.deviceRoleForRuntime({ ...identity, certificates: [certificate] }, device.deviceId, this.grant) !== "automation") {
+      throw new RustyAutomationAccessError("denied");
+    }
   }
 
   private assertExecuting(): void {
@@ -1633,6 +1743,22 @@ export class AutomationReplica {
   }
 }
 
+function assertStandingUpgrade(prior: SerializedReplica, packet: AutomationActivationPacket): void {
+  if (isStandingGrant(prior.grant) || !isStandingGrant(packet.grant)) throw new Error("Invalid automation access upgrade");
+  const { expiresAt: _expiry, ...previousScope } = prior.grant.payload.automation!;
+  const { service: _service, ...nextScope } = packet.grant.payload.automation;
+  const { scope: previousDefinitionScope, ...previousDefinition } = prior.definition!.payload;
+  const { scope: nextDefinitionScope, ...nextDefinition } = packet.definition!.payload;
+  if (canonicalizeJson(previousScope) !== canonicalizeJson(nextScope) ||
+      canonicalizeJson(previousDefinition) !== canonicalizeJson(nextDefinition) ||
+      previousDefinitionScope.boardId !== nextDefinitionScope.boardId ||
+      prior.blind.scopeId !== packet.blind.scopeId ||
+      prior.blind.servicePublicKey !== packet.blind.servicePublicKey ||
+      canonicalizeJson(parseReplicaContentKeys(prior.blind)) !== canonicalizeJson(parseReplicaContentKeys(packet.blind))) {
+    throw new Error("Service access upgrade must preserve the existing board permissions and storage");
+  }
+}
+
 async function validateActivation(packet: AutomationActivationPacket, profile: LocalProfile): Promise<WorkspaceWriteAuthorityEvidence> {
   if (!packet || ![1, 2].includes(packet.version) || packet.workspaceId !== packet.blind.workspaceId ||
     !packet.workspaceId || !packet.grant?.payload || packet.grant.payload.role !== "automation" ||
@@ -1654,13 +1780,10 @@ async function validateActivation(packet: AutomationActivationPacket, profile: L
     throw new Error("Current workspace owner is not bound to its public key");
   }
   const grant = packet.grant;
-  if (grant.payload.accessEpoch !== authority.currentEpoch || grant.payload.automation!.expiresAt <= Date.now()) {
+  if (grant.payload.accessEpoch !== authority.currentEpoch || !isStandingGrant(grant) && grant.payload.automation!.expiresAt <= Date.now()) {
     throw new Error("Automation grant epoch or expiry is invalid");
   }
-  const role = WasmStateCore.verifyWorkspaceGrant(grant, packet.workspaceId, profile.identity.personId, {
-    personId: owner.personId, publicKey: owner.publicKey, certificates: owner.certificates,
-  });
-  if (role !== "automation") throw new Error("Owner did not authorize this automation identity");
+  await verifyExecutionGrant(grant, packet.workspaceId, profile.identity.personId, owner, packet.blind, packet.definition);
   if (packet.version === 2 && !packet.definition || packet.version === 1 && packet.definition) {
     throw new Error("Automation activation version does not match its type contract");
   }
@@ -1669,7 +1792,7 @@ async function validateActivation(packet: AutomationActivationPacket, profile: L
   return packet.initial.history ? mergeAuthority(authority, null) : prepareAuthority(authority, null, decodeBlindBytes(packet.initial.document), packet.workspaceId);
 }
 
-function validateBindings(bindings: AutomationReplicaBindings, scope?: AutomationGrantScope): void {
+function validateBindings(bindings: AutomationReplicaBindings, scope?: AutomationGrantScope | StandingAutomationGrantScope): void {
   if (!scope || bindings.boardId !== scope.boardId || canonicalizeJson(bindings.columns) !== canonicalizeJson(scope.columns)) {
     throw new Error("Automation field and board bindings differ from the signed scope");
   }
@@ -1721,20 +1844,33 @@ async function validateSerialized(value: SerializedReplica, profile: LocalProfil
     owner = history.issuer;
   }
   if (!owner?.personId || !owner.publicKey || await publicKeyId(owner.publicKey) !== owner.personId ||
-    purpose === "restore" && value.grant.payload.accessEpoch !== value.authority.currentEpoch ||
-    purpose === "restore" && value.grant.payload.automation!.expiresAt <= Date.now()) {
+    purpose === "restore" && value.grant.payload.accessEpoch !== value.authority.currentEpoch) {
     throw new Error("Serialized automation authority is invalid or expired");
   }
-  const role = WasmStateCore.verifyWorkspaceGrant(value.grant, value.workspaceId, profile.identity.personId, {
-    personId: owner.personId, publicKey: owner.publicKey, certificates: owner.certificates,
-  });
-  if (role !== "automation") throw new Error("Serialized automation grant is not owner-authorized");
+  if (purpose === "restore" && !isStandingGrant(value.grant) && value.grant.payload.automation!.expiresAt <= Date.now()) {
+    throw new LegacyAutomationAccessError("Serialized automation authority is invalid or expired");
+  }
+  await verifyExecutionGrant(value.grant, value.workspaceId, profile.identity.personId, owner, value.blind, value.definition);
   if (value.definition) await validateDefinitionProof(value.definition, value.workspaceId, value.grant, owner);
   return admission;
 }
 
+async function verifyExecutionGrant(grant: AutomationExecutionGrant, workspaceId: string, personId: string,
+  owner: WorkspaceWriteAuthorityEvidence["currentOwner"], blind: BlindReplicaConfig, definition?: SignedEnvelope<AutomationDefinition>) {
+  if (isStandingGrant(grant)) {
+    const { service } = parseStandingAutomationGrantScope(grant.payload.automation);
+    if (blind.readToken !== "" || blind.writeToken !== "" ||
+      service.definitionId !== definition?.payload.id || service.issuerKeyId !== await publicKeyId(blind.servicePublicKey)) {
+      throw new Error("Standing automation approval does not match the definition and Rusty issuer");
+    }
+    WasmStateCore.verifyAutomationServiceApproval(grant, workspaceId, personId, owner);
+  } else if (WasmStateCore.verifyWorkspaceGrant(grant, workspaceId, personId, owner) !== "automation") {
+    throw new Error("Owner did not authorize this automation identity");
+  }
+}
+
 async function validateDefinitionProof(definition: SignedEnvelope<AutomationDefinition>, workspaceId: string,
-  grant: WorkspaceGrant, owner: WorkspaceWriteAuthorityEvidence["currentOwner"]): Promise<void> {
+  grant: AutomationExecutionGrant, owner: WorkspaceWriteAuthorityEvidence["currentOwner"]): Promise<void> {
   if (definition.payload.typeVersion !== grant.payload.automation!.version) throw new Error("Automation definition version does not match its grant");
   await verifyAutomationDefinition(definition, { workspaceId, boardId: grant.payload.automation!.boardId,
     grantId: grant.payload.grantId, signerKeyId: grant.signerKeyId }, owner);

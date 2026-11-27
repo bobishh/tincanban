@@ -239,7 +239,8 @@ function admissionResult(plan: AdmissionPlan, verifiedInputs: WorkspaceChangeAut
     const original = verifiedInputs.find(record => record.signed.signature === verified.signed.signature &&
       canonicalizeJson(record.signed) === canonicalizeJson(verified.signed) && record.publicKey === verified.publicKey &&
       canonicalizeJson(record.certificates) === canonicalizeJson(verified.certificates) &&
-      canonicalizeJson(record.grant ?? null) === canonicalizeJson(verified.grant ?? null))
+      canonicalizeJson(record.grant ?? null) === canonicalizeJson(verified.grant ?? null) &&
+      canonicalizeJson(record.automationOperation ?? null) === canonicalizeJson(verified.automationOperation ?? null))
     // Rust returns verified proof fields but omits Match's owner-chain metadata.
     // Restore only metadata attached to the exact verified input record.
     return original ? { ...verified, ownerPublicKey: original.ownerPublicKey,

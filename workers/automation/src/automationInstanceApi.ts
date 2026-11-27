@@ -47,7 +47,7 @@ export async function handleAutomationInstanceApi(request: Request, env: WorkerE
     if (!("integrationId" in body)) throw new TypeError("Instance route is missing");
     const result = await env.AUTOMATION.getByName(body.integrationId).manageInstance(proof, action, input.body, url.origin);
     if (!result) return json({ error: "No existing instance is available to this owner and workspace" }, 403, cors);
-    if ("ok" in result) return result.ok ? json({ status: result.status, synced: true }, 200, cors)
+    if ("ok" in result) return result.ok ? json({ status: result.status, synced: true, ...(result.access ? { access: result.access } : {}) }, 200, cors)
       : json({ error: result.error }, result.status, cors);
     return json(result, 200, cors);
   } catch (error) {

@@ -1,9 +1,10 @@
+import type { prepareAutomationActivation as prepareActivation } from "./automation"
 import type { useTincanban } from "../state"
 import * as Automerge from "@automerge/automerge/slim"
 import type { BlindReplicaConfig } from "./blindReplication"
 import type { AutomationWorkerIdentity, AutomationConfiguration } from "./automation"
-import { automationEntityId } from "../domain/automationLifecycle"
-import { parseAutomationApproval } from "../domain/automationApproval"
+import { automationEntityId, automationLifecycle } from "../domain/automationLifecycle"
+import { isLegacyAutomationGrant, parseAutomationApproval, type LegacyAutomationGrant } from "../domain/automationApproval"
 import { hasEntityKind, type WorkspaceDocumentV2 } from "../domain/model"
 import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { defaultProofStore } from "../domain/proofs"
@@ -15,9 +16,9 @@ import { withLocalStateWriteLock } from "../localStateLock"
 import { assertReplicaCredentialsUnfrozen, replicaCredentialFreezeKey } from "../sync/replicaCredentialFreeze"
 import { privateReplicaBinding } from "../sync/privateReplicaBinding"
 
-type ApprovedGrant = ReturnType<typeof parseAutomationApproval>["grant"]
+type ApprovedGrant = LegacyAutomationGrant
 type RenewalBinding = {
-  grant: ApprovedGrant
+  grant: ReturnType<typeof parseAutomationApproval>["grant"]
   storage: Pick<BlindReplicaConfig, "origin" | "scopeId" | "keyEpoch" | "servicePublicKey">
 }
 
@@ -36,10 +37,10 @@ export async function exportAutomationConnectionPacket(tincanban: ReturnType<typ
     .filter(config => !renewal || sameRenewalStorage(config, renewal.storage))
     .sort((left, right) => left.origin.localeCompare(right.origin))
   if (!configs[0]) throw new Error("Connect Rusty for this board in Sync, then retry this connection.")
-  return exportApprovedAutomation(tincanban, configs[0], JSON.stringify(identity), configuration, renewal)
+  return exportApprovedAutomation(tincanban, configs[0], JSON.stringify(identity), configuration, renewal, true)
 }
 
-export async function exportApprovedAutomation(tincanban: ReturnType<typeof useTincanban>, config: BlindReplicaConfig, workerIdentity: string, configuration?: AutomationConfiguration, renewal?: RenewalBinding) {
+export async function exportApprovedAutomation(tincanban: ReturnType<typeof useTincanban>, config: BlindReplicaConfig, workerIdentity: string, configuration?: AutomationConfiguration, renewal?: RenewalBinding, standing = false) {
   config = JSON.parse(canonicalizeJson(config)) as BlindReplicaConfig
   configuration = configuration === undefined ? undefined : JSON.parse(canonicalizeJson(configuration)) as AutomationConfiguration
   assertWorkspaceReplicaPurpose(config)
@@ -48,18 +49,17 @@ export async function exportApprovedAutomation(tincanban: ReturnType<typeof useT
   if (!profile) throw new Error("Identity unavailable")
   const transitionKey = await replicaCredentialFreezeKey(profile.identity.personId, config.origin)
   return withLocalStateWriteLock(transitionKey, async () => {
-  const ensureCurrent = async () => {
+  const verifyOwnerDevice = () => {
     const current = tincanban.getCurrentProfile()
     if (!current || current.identity.personId !== profile.identity.personId || current.device.deviceId !== profile.device.deviceId ||
       current.certificate.signature !== profile.certificate.signature || tincanban.getActiveDoc()?.id !== config.workspaceId) {
       throw new Error("Owner device or workspace changed during automation approval")
     }
+  }
+  const ensureCurrent = async () => {
+    verifyOwnerDevice()
     await assertReplicaCredentialsUnfrozen(profile.identity.personId, config)
-    const after = tincanban.getCurrentProfile()
-    if (!after || after.identity.personId !== profile.identity.personId || after.device.deviceId !== profile.device.deviceId ||
-      after.certificate.signature !== profile.certificate.signature || tincanban.getActiveDoc()?.id !== config.workspaceId) {
-      throw new Error("Owner device or workspace changed during automation approval")
-    }
+    verifyOwnerDevice()
   }
   const writerConfig = await readCurrentWriterConfig(tincanban, config, profile, ensureCurrent)
   config = writerConfig
@@ -88,8 +88,11 @@ export async function exportApprovedAutomation(tincanban: ReturnType<typeof useT
   await currentAuthority()
   const bytes = await tincanban.readWorkspaceBytes(config.workspaceId)
   const authorization = await exportAuthorizationBundle(bytes, profile)
+  const service = standing ? await import("./automationServiceAccess") : undefined
+  const serviceIssuerKeyId = await service?.automationCredentialIssuer(config)
+  if (service) assertNoOtherLegacyAutomation(doc, worker)
   const packet = await prepareAutomationActivation({ profile, doc, bytes, authorization, blind: config,
-    worker, configuration, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+    worker, configuration, serviceIssuerKeyId, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
     signingContext: async (purpose, binding) => {
       const stored = await defaultProofStore.listCertificates()
       const certificates = [...authorization.authority.currentOwner.certificates,
@@ -99,27 +102,51 @@ export async function exportApprovedAutomation(tincanban: ReturnType<typeof useT
       })
     } })
   await ensureCurrent()
-  if (renewal) requireRenewedScope(renewal.grant.payload.automation, packet.grant.payload.automation!)
+  if (renewal && !standing) requireLegacyRenewal(renewal, packet.grant)
   if (config.historicalContentKeyVariants || packet.blind.historicalContentKeyVariants) {
     const { assertAutomationKeyHistorySupported } = await import("./automationInstanceClient")
     await assertAutomationKeyHistorySupported(worker.origin)
     await ensureCurrent()
   }
+  packet.initial = await recordBoardApproval(tincanban, doc, packet, profile, worker, Boolean(configuration || standing), ensureCurrent)
+  await ensureCurrent()
+  if (!service) return JSON.stringify(packet, null, 2)
+  const scopeAuthoritySnapshot = await service.readServiceScopeAuthority(profile, config, ensureCurrent)
+  return JSON.stringify({ ...packet, blind: { ...packet.blind, readToken: "", writeToken: "" },
+    initial: { ...packet.initial, scopeAuthoritySnapshot } }, null, 2)
+  })
+}
+
+function assertNoOtherLegacyAutomation(doc: WorkspaceDocumentV2, worker: AutomationWorkerIdentity) {
+  const own = automationEntityId(worker.definitionId ?? worker.integrationId ?? worker.personId)
+  if (Object.values(doc.entities).some(entity => hasEntityKind(entity, "automation") && entity.id !== own &&
+    automationLifecycle(entity).state !== "deleted" && isLegacyAutomationGrant(parseAutomationApproval(entity.approval).grant))) {
+    throw new Error("Another automation on this board still uses expiring access. Review its access before continuing.")
+  }
+}
+
+type ActivationPacket = Awaited<ReturnType<typeof prepareActivation<Awaited<ReturnType<typeof exportAuthorizationBundle>>, BlindReplicaConfig>>>
+
+async function recordBoardApproval(tincanban: ReturnType<typeof useTincanban>, doc: WorkspaceDocumentV2,
+  packet: ActivationPacket, profile: LocalProfile, worker: AutomationWorkerIdentity, replaceExisting: boolean, ensureCurrent: () => Promise<void>) {
   const id = automationEntityId(packet.definition.payload.id)
-  if (!doc.entities[id]) {
-    if (tincanban.getActiveDoc()?.id !== config.workspaceId) throw new Error("Open the automation workspace before approval")
+  const existing = doc.entities[id]
+  const approval = JSON.stringify({ definition: packet.definition, grant: packet.grant })
+  if (!existing) {
+    if (tincanban.getActiveDoc()?.id !== packet.workspaceId) throw new Error("Open the automation workspace before approval")
     await ensureCurrent()
     await tincanban.executeCommandAsync({ kind: "createAutomation", definition: packet.definition.payload,
-      approval: JSON.stringify({ definition: packet.definition, grant: packet.grant }), executor: { origin: worker.origin, personId: worker.personId } })
+      approval, executor: { origin: worker.origin, personId: worker.personId } })
     await ensureCurrent()
   }
-  else if (configuration) {
+  else if (replaceExisting && hasEntityKind(existing, "automation") &&
+    canonicalizeJson(JSON.parse(existing.approval)) !== canonicalizeJson(JSON.parse(approval))) {
     await ensureCurrent()
     await tincanban.executeCommandAsync({ kind: "configureAutomation", definition: packet.definition.payload,
-      approval: JSON.stringify({ definition: packet.definition, grant: packet.grant }) })
+      approval })
     await ensureCurrent()
   }
-  const currentBytes = await tincanban.readWorkspaceBytes(config.workspaceId)
+  const currentBytes = await tincanban.readWorkspaceBytes(packet.workspaceId)
   const latestAuthorization = await exportAuthorizationBundle(currentBytes, profile)
   const previousCertificates = packet.initial.authorization.authority.currentOwner.certificates ?? []
   if (latestAuthorization.authority.currentOwner.personId !== profile.identity.personId ||
@@ -130,10 +157,37 @@ export async function exportApprovedAutomation(tincanban: ReturnType<typeof useT
     .map(certificate => [canonicalizeJson(certificate), certificate]))
   const currentAuthorization = { ...latestAuthorization, authority: { ...latestAuthorization.authority,
     currentOwner: { ...latestAuthorization.authority.currentOwner, certificates: [...certificates.values()] } } }
-  packet.initial = { ...packet.initial, document: encodeBlindBytes(currentBytes), authorization: currentAuthorization }
-  await ensureCurrent()
-  return JSON.stringify(packet, null, 2)
-  })
+  return { ...packet.initial, document: encodeBlindBytes(currentBytes), authorization: currentAuthorization }
+}
+
+function requireLegacyRenewal(renewal: RenewalBinding, grant: ActivationPacket["grant"]) {
+  if (!isLegacyAutomationGrant(renewal.grant)) throw new Error("This automation already has standing access")
+  const scope = grant.payload.automation
+  if (!scope || !("expiresAt" in scope)) throw new Error("This approval has no expiration to extend")
+  requireRenewedScope(renewal.grant.payload.automation, scope)
+}
+
+export async function registerConnectionServiceAccess(tincanban: ReturnType<typeof useTincanban>,
+  identity: AutomationWorkerIdentity, value: unknown, ensureIdentity: () => void) {
+  const packet = value as { workspaceId: string; definition: unknown; grant: unknown; blind: BlindReplicaConfig;
+    initial: { scopeAuthoritySnapshot: unknown } }
+  const { definition, grant } = parseAutomationApproval(JSON.stringify({ definition: packet.definition, grant: packet.grant }))
+  const profile = tincanban.getCurrentProfile()
+  if (!profile || isLegacyAutomationGrant(grant) || grant.payload.personId !== identity.personId ||
+    packet.workspaceId !== grant.payload.workspaceId || packet.blind.workspaceId !== packet.workspaceId ||
+    packet.blind.readToken !== "" || packet.blind.writeToken !== "") throw new Error("Retained service approval is invalid")
+  const ensureCurrent = async () => {
+    ensureIdentity()
+    const doc = await tincanban.readWorkspaceDoc(packet.workspaceId)
+    const entity = doc.entities[automationEntityId(definition.payload.id)]
+    if (!hasEntityKind(entity, "automation") || automationLifecycle(entity).state === "deleted" ||
+      entity.executor.personId !== identity.personId || entity.executor.origin !== identity.origin ||
+      canonicalizeJson(parseAutomationApproval(entity.approval)) !== canonicalizeJson({ definition, grant }) ||
+      await workspaceRole(doc, profile) !== "owner") throw new Error("Workspace approval changed before registering service access")
+    ensureIdentity()
+  }
+  const { registerAutomationServiceAccess } = await import("./automationServiceAccess")
+  await registerAutomationServiceAccess(profile, packet.blind, identity, grant, packet.initial.scopeAuthoritySnapshot, ensureCurrent)
 }
 
 async function readCurrentWriterConfig(tincanban: ReturnType<typeof useTincanban>, requested: BlindReplicaConfig,

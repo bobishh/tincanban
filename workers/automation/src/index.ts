@@ -8,7 +8,7 @@ import { assertPublicHttpsUrl } from "./extraction";
 import { parseWebsiteSubmission, issueHumanChallenge, verifyHumanChallenge, type WebsiteSubmission } from "./intake";
 import { AutomationCoordinator, type EnqueueSuccess } from "./coordinator";
 import type { AutomationEvent } from "./pipeline";
-import type { AutomationActivationPacket } from "./replica";
+import { automationGrantExpiry, type AutomationActivationPacket } from "./replica";
 import { handleOwnerApi } from "./ownerApi";
 import { handleApplicationReviewApi } from "./applicationReviewApi";
 import { handleAutomationInstanceApi } from "./automationInstanceApi";
@@ -297,12 +297,13 @@ function coordinator(env: WorkerEnv, integrationId: string): DurableObjectStub<A
 }
 
 function assertActivationMatchesIntegration(packet: AutomationActivationPacket, integration: AutomationIntegration): void {
+  const expiresAt = packet?.grant ? automationGrantExpiry(packet.grant) : null;
   if (!packet || ![1, 2].includes(packet.version) || packet.workspaceId !== integration.workspaceId || packet.blind?.workspaceId !== integration.workspaceId ||
     !packet.grant?.payload || packet.grant.payload.kind !== "workspace-grant" || packet.grant.payload.role !== "automation" ||
     packet.grant.payload.workspaceId !== integration.workspaceId || ![1, 2].includes(packet.grant.payload.automation?.version ?? 0) ||
     packet.grant.payload.automation?.boardId !== integration.scope.boardId ||
-    !Number.isFinite(packet.grant.payload.automation?.expiresAt) || packet.grant.payload.automation!.expiresAt <= Date.now() ||
-    packet.grant.payload.automation!.expiresAt !== Date.parse(integration.scope.expiresAt)) {
+    expiresAt === null || !Number.isFinite(expiresAt) || expiresAt <= Date.now() ||
+    integration.scope.expiresAt === null || expiresAt !== Date.parse(integration.scope.expiresAt)) {
     throw new TypeError("Activation grant does not match configured integration scope");
   }
   if (packet.version === 2) {
@@ -350,7 +351,7 @@ function authorizeProvisioning(request: Request, env: WorkerEnv): void {
 }
 
 function assertActiveIntegration(integration: AutomationIntegration): void {
-  if (Date.parse(integration.scope.expiresAt) <= Date.now()) throw new Error("Integration authorization has expired");
+  if (integration.scope.expiresAt !== null && Date.parse(integration.scope.expiresAt) <= Date.now()) throw new Error("Integration authorization has expired");
 }
 
 type EmailIntegrationRoute =

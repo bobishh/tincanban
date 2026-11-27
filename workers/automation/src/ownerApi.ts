@@ -3,7 +3,7 @@ import { automationTypes, parseAutomationDefinition } from "../../../src/domain/
 import { automationBodyHash, verifyAutomationOwnerRequest } from "../../../src/domain/automationProtocol";
 import type { AutomationIntegration } from "./configuration";
 import type { WorkerEnv } from "./index";
-import type { AutomationActivationPacket } from "./replica";
+import { automationGrantExpiry, type AutomationActivationPacket } from "./replica";
 import { json, readJson } from "./http";
 import { workerBuildSha, workerReleaseIdentity } from "./buildIdentity";
 
@@ -64,10 +64,11 @@ export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Hea
     if (!grant || definition.typeVersion !== grant.version || definition.scope.boardId !== grant.boardId || definition.scope.grantId !== packet.grant.payload.grantId) {
       return json({ error: "Activation scope is incomplete" }, 422, cors);
     }
+    const grantExpiry = automationGrantExpiry(packet.grant);
     const integration: AutomationIntegration = { id: intent.integrationId, workspaceId: intent.workspaceId,
-      scope: { ...packet.bindings, version: 1, expiresAt: new Date(grant.expiresAt).toISOString() }, allowedForwarders: [] };
+      scope: { ...packet.bindings, version: 1, expiresAt: grantExpiry === null ? null : new Date(grantExpiry).toISOString() }, allowedForwarders: [] };
     const result = await env.AUTOMATION.getByName(intent.integrationId).activateOwner(registration, packet, integration, url.origin);
-    return result.ok ? json({ status: result.status, synced: true }, 200, cors)
+    return result.ok ? json({ status: result.status, synced: true, ...(result.access ? { access: result.access } : {}) }, 200, cors)
       : json({ error: result.error }, result.status, cors);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Automation setup failed";

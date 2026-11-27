@@ -64,3 +64,49 @@ it("Given another Identity is signed in, when approving a workflow connection, t
   await expect(connection.approve("c".repeat(43), "workspace-1", "reviewed-scope")).rejects.toThrow(/workflow owner/i)
   expect(requests).toBe(0)
 })
+
+it("Given an existing expired participant, when its owner approves regular connection, then upgrade its exact route and keep the packet after response loss", async () => {
+  const existing = { workspaceId: "existing-board", executorPersonId: "d".repeat(43) }
+  const current = parseAutomationConnectionRequest({ ...request(),
+    return_to: `https://reflux.example/workflows/job-search-automation/edit?automation_connection=${intent}` })
+  let saved: string | null = null
+  let prepares = 0
+  let activations = 0
+  const connection = createAutomationConnection({
+    request: current,
+    store: { load: async () => saved, save: async value => { saved = value } },
+    sign: async () => { throw new Error("Existing access uses a signed instance request") },
+    exportPacket: async () => { throw new Error("Existing access cannot enroll another participant") },
+    existing: {
+      async prepare(target, relay) {
+        expect(target).toEqual({ ...existing, definitionId: intent, integrationId: intent, origin: "https://reflux.example" })
+        await relay("identity", { signed: true }, target)
+        prepares++
+        return { packet: JSON.stringify({ approved: true }) }
+      },
+      async activate(target, relay, packet) {
+        expect(packet).toEqual({ approved: true })
+        await relay("activate", { signed: true }, { ...target, packet })
+      },
+    },
+    fetcher: async (url, init) => {
+      const path = new URL(String(url)).pathname
+      if (path.endsWith("/resolve")) return Response.json({
+        integrationId: intent, automationOrigin: "https://reflux.example", workflowTitle: "Jobs",
+        workflowSlug: current.workflow_slug, ownerPersonId: owner, expiresAt: current.expires_at, returnTo: current.return_to,
+        configuration: { name: "Jobs", type: "job-intake", typeVersion: 2, parameters: { sources: ["website", "email"] } },
+        existing,
+      })
+      expect(path).toMatch(/\/instance$/)
+      const body = JSON.parse(String(init?.body))
+      expect(body.handoffCode).toBe(current.handoff_code)
+      if (body.action === "activate" && ++activations === 1) throw new TypeError("Response lost")
+      return Response.json({ status: "active", synced: true })
+    },
+  })
+  await expect(connection.approve(owner, "another-board", "scope")).rejects.toThrow(/different|existing board/i)
+  await expect(connection.approve(owner, existing.workspaceId, "scope")).rejects.toThrow("Response lost")
+  expect(await connection.approve(owner, existing.workspaceId, "scope")).toBe(current.return_to)
+  expect(prepares).toBe(1)
+  expect(activations).toBe(2)
+})
