@@ -70,7 +70,7 @@ async function retry() {
     <div class="publication-status">
       <p v-if="!access.origin.value" class="dialog-copy">{{ access.origins.value.length > 1 ? 'Choose a connected Rusty to publish this board.' : 'Connect Rusty to this board to enable public access.' }}</p>
       <template v-else-if="access.checked.value">
-        <p v-if="access.published.value" role="status">{{ access.connected.value ? 'Public · Changes sync automatically.' : 'Public · Updates paused.' }}</p>
+        <p v-if="access.published.value" role="status">{{ access.connected.value && !access.error.value ? 'Public · Changes sync automatically.' : 'Public · Updates paused.' }}</p>
         <p v-else-if="access.busy.value && access.progress.value?.phase !== 'checking'" role="status">Publication awaiting confirmation.</p>
         <p v-else role="status">{{ access.privateConfirmed.value ? 'Private · Access requires an invitation.' : 'Public · Withdrawal pending.' }}</p>
       </template>

@@ -38,7 +38,7 @@ export function ownerAuthorities(credential: WorkspaceMeshCredential): Workspace
     certificates: credential.ownerCertificates as DeviceCertificate[] }, ...((credential.ownerHistory ?? []) as WorkspaceAuthority[])]
 }
 
-export function deviceRevocations(credential: WorkspaceMeshCredential): WorkspaceDeviceRevocation[] {
+export function deviceRevocations(credential: Pick<WorkspaceMeshCredential, "catalog">): WorkspaceDeviceRevocation[] {
   return meshCatalog(credential).deviceRevocations ?? []
 }
 

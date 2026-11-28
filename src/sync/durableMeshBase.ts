@@ -153,7 +153,7 @@ export function revokedPersonIds(credential: WorkspaceMeshCredential) {
 
 /** A signed grant issued after a removal has a new access generation. Legacy
  * grants are generation 1, so old persisted documents still verify normally. */
-export function isGrantRevoked(credential: WorkspaceMeshCredential, personId: string,
+export function isGrantRevoked(credential: Pick<WorkspaceMeshCredential, "ownerPersonId" | "catalog">, personId: string,
   grant: { payload?: { accessEpoch?: unknown } } | undefined): boolean {
   return meshRustRuntime().state.isGrantRevoked(credential, personId, grant ?? null)
 }
@@ -376,7 +376,7 @@ export abstract class DurableMeshBase {
   protected abstract publishWorkspace(workspaceId: string): Promise<void>
 }
 
-export function isDeviceRevoked(credential: WorkspaceMeshCredential, personId: string, deviceId: string): boolean {
+export function isDeviceRevoked(credential: Pick<WorkspaceMeshCredential, "catalog">, personId: string, deviceId: string): boolean {
   return meshRustRuntime().state.isDeviceRevoked(credential, personId, deviceId)
 }
 

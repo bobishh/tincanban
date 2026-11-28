@@ -86,14 +86,6 @@ it("Given an owner workspace, when building public delivery policy, then sign th
   const { profile, doc } = await fixture()
   try {
     await recordGenesisAuthority(doc, profile)
-    const authority = await peerStore.getWorkspaceAuthority(doc.id)
-    if (!authority) throw new Error("Expected stored workspace authority")
-    // Genesis persists durable authority; the active mesh credential is
-    // supplied by transport enrollment. Keep this fixture offline while
-    // exercising the real policy builder and real owner signing keys.
-    vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue({
-      ...authority, transportSecret: "test-transport-secret",
-    })
     const policy = await buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 1)
     expect(policy.policy.payload).toMatchObject({ kind: "rusty-public-board-delivery-policy", workspaceId: doc.id, boardId: "board-a", generation: 1 })
 
@@ -108,7 +100,6 @@ it("Given unchanged verified public delivery inputs, when polling again, then re
     await recordGenesisAuthority(doc, profile)
     const authority = await peerStore.getWorkspaceAuthority(doc.id)
     if (!authority) throw new Error("Expected stored workspace authority")
-    const credential = vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue({ ...authority, transportSecret: "test-secret" })
     const sign = vi.spyOn(signingContext, "signWithContext")
     const cache = {}
     const boardId = Object.values(doc.entities).find(entity => hasEntityKind(entity, "board"))!.id
@@ -124,7 +115,9 @@ it("Given unchanged verified public delivery inputs, when polling again, then re
     expect(sign).toHaveBeenCalledOnce()
     await replaceStoredDeviceKey()
     await expect(buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 1, () => {}, undefined, cache)).rejects.toThrow(/changed|signing key/i)
-    credential.mockResolvedValue({ ...authority, ownerPublicKey: "changed-owner-key", transportSecret: "test-secret" })
+    vi.spyOn(peerStore, "readWorkspaceAuthorization").mockResolvedValue([{
+      workspaceId: doc.id, credential: null, authority: { ...authority, ownerPublicKey: "changed-owner-key" },
+    }])
     await expect(buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 1, () => {}, undefined, cache)).rejects.toThrow(/owner authority/i)
     expect(sign).toHaveBeenCalledOnce()
   } finally { Automerge.free(doc) }
@@ -136,7 +129,6 @@ it("Given a cached public policy, when grants, certificates, epoch or automation
     await recordGenesisAuthority(doc, profile)
     const authority = await peerStore.getWorkspaceAuthority(doc.id)
     if (!authority) throw new Error("Expected stored workspace authority")
-    const credential = vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue({ ...authority, transportSecret: "test-secret" })
     const sign = vi.spyOn(signingContext, "signWithContext")
     const cache = {}
     const build = () => buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 1, () => {}, undefined, cache)
@@ -151,10 +143,9 @@ it("Given a cached public policy, when grants, certificates, epoch or automation
     await defaultProofStore.putCertificate(await certHashDefault(certificate), certificate)
     expect((await build()).ownerCertificates).toContainEqual(certificate)
     expect(sign).toHaveBeenCalledTimes(3)
-    credential.mockResolvedValue({ ...authority, epoch: authority.epoch + 1, transportSecret: "test-secret" })
-    expect((await build()).policy.payload.acceptedGrants).toEqual([grant])
+    await peerStore.putWorkspaceAuthority({ ...authority, epoch: authority.epoch + 1 })
+    expect((await build()).policy.payload).toMatchObject({ accessEpoch: authority.epoch + 1, acceptedGrants: [grant] })
     expect(sign).toHaveBeenCalledTimes(4)
-    credential.mockResolvedValue({ ...authority, transportSecret: "test-secret" })
     const expiresAt = Date.now() + 60_000
     const automation = await createAutomationWorkspaceGrant(profile, doc.id, "automation", {
       version: 1, boardId: "board-a", columns: { lead: "lead", interview: "interview", rejected: "rejected" }, fieldIds: [], expiresAt,
@@ -175,11 +166,9 @@ it("Given valid editor grants issued at different access generations, when the o
   try {
     await recordGenesisAuthority(doc, profile)
     const authority = (await peerStore.getWorkspaceAuthority(doc.id))!
-    const credential = { ...authority, transportSecret: "test-secret" }
-    vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue(credential)
     const first = await createWorkspaceGrant(profile, doc.id, "existing-editor", "editor", 1)
-    const nextEpoch = meshRustRuntime().state.nextAccessEpoch(credential, [first])
-    expect(nextEpoch).toBeGreaterThan(credential.epoch)
+    const nextEpoch = meshRustRuntime().state.nextAccessEpoch(authority, [first])
+    expect(nextEpoch).toBeGreaterThan(authority.epoch)
     const promoted = await createWorkspaceGrant(profile, doc.id, "promoted-editor", "editor", nextEpoch)
     await defaultProofStore.putGrant(first.payload.grantId, first)
     await defaultProofStore.putGrant(promoted.payload.grantId, promoted)
@@ -192,7 +181,7 @@ it("Given valid editor grants issued at different access generations, when the o
     expect(policy.policy.payload.acceptedGrants).toContainEqual(first)
     expect(policy.policy.payload.acceptedGrants).toContainEqual(promoted)
     const revoked = await createWorkspaceRevocation(profile, doc.id, promoted.payload.personId, nextEpoch, Automerge.getHeads(doc))
-    credential.catalog = { revocations: [revoked] }
+    await peerStore.putWorkspaceAuthority({ ...authority, catalog: { ...authority.catalog as object, revocations: [revoked] } })
     const nextPolicy = await buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 2)
     expect(nextPolicy.policy.payload.acceptedGrants).toEqual([first])
     expect(nextPolicy.policy.payload.revokedGrantIds).toEqual([promoted.payload.grantId])
@@ -204,9 +193,6 @@ it("Given an automation approved in the admitted board but absent from the peer 
   let withAutomation: typeof doc | undefined
   try {
     await recordGenesisAuthority(doc, profile)
-    const authority = await peerStore.getWorkspaceAuthority(doc.id)
-    if (!authority) throw new Error("Expected stored workspace authority")
-    vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue({ ...authority, transportSecret: "test-transport-secret" })
     const board = Object.values(doc.entities).find(entity => hasEntityKind(entity, "board"))!
     const grant = await createAutomationWorkspaceGrant(profile, doc.id, "approved-automation", {
       version: 1, boardId: board.id, columns: { lead: "lead", interview: "interview", rejected: "rejected" },

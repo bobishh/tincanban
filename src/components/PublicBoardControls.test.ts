@@ -28,4 +28,12 @@ describe("public board publication status", () => {
     expect(html).not.toContain("Public · Changes sync automatically.")
     expect(html).not.toContain("Open public board")
   })
+
+  it("Given a published board with Rusty connected, when an update fails, then show paused updates and retain the public link and retry", async () => {
+    const html = await render(access({ busy: ref(false), error: ref("Cannot verify current owner") }))
+    expect(html).toContain("Public · Updates paused.")
+    expect(html).not.toContain("Changes sync automatically.")
+    expect(html).toContain("Open public board")
+    expect(html).toContain("Retry")
+  })
 })

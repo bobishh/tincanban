@@ -20,6 +20,53 @@ async function connectFixtureBoard(page: Page, origin: string) {
   await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
 }
 
+test("Given a public board connected directly to Rusty, when an update fails and the owner retries, then keep the public link and resume delivery", async ({ page, baseURL }) => {
+  test.setTimeout(90_000)
+  await page.goto("/")
+  await createJobSearchWorkspace(page, "Public delivery")
+  const rusty = await startRustyService({}, baseURL!)
+  try {
+    await connectFixtureBoard(page, rusty.origin)
+    expect(await page.evaluate(async () => {
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
+      const { peerStore } = await import("/src/sync/peerStore.ts")
+      return Boolean(await peerStore.getWorkspaceCredential(useTincanban().getActiveDoc()!.id))
+    })).toBe(false)
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    const settings = page.getByRole("dialog", { name: "Settings", exact: true })
+    await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
+    const publication = settings.getByRole("region", { name: "Public board access" })
+    const toggle = publication.getByRole("switch", { name: "Public board", exact: true })
+    await toggle.click()
+    await publication.getByRole("button", { name: "Enable public access", exact: true }).click()
+    const link = publication.getByRole("link", { name: "Open public board", exact: true })
+    await expect(link).toBeVisible({ timeout: 20_000 })
+    await expect(publication.getByRole("status").first()).toContainText("Changes sync automatically.")
+    const revision = await publication.getAttribute("data-public-revision")
+
+    const api = `${rusty.origin}/v1/public/boards/**`
+    let failUpdates = true
+    await page.route(api, route => failUpdates && route.request().method() === "PUT"
+      ? route.fulfill({ status: 503, json: { message: "Test publication failure" }, headers: { "access-control-allow-origin": baseURL! } })
+      : route.continue())
+    await page.evaluate(async () => {
+      const app = (await import("/src/test/stateFixture.ts")).useTincanban()
+      const column = app.genericColumns.value.find(column => column.title === "Lead")!
+      const fields = app.activeBoard.value!.preset!.bindings
+      await app.createItemAsync({ title: "Public update", parentId: column.id,
+        values: { [fields["field.company"]!]: "Public update", [fields["field.role"]!]: "Engineer" } })
+    })
+    await expect(publication.getByRole("alert")).toBeVisible({ timeout: 20_000 })
+    await expect(publication.getByRole("status").first()).toContainText("Updates paused.")
+    await expect(link).toBeVisible()
+
+    failUpdates = false
+    await publication.getByRole("button", { name: "Retry", exact: true }).click()
+    await expect.poll(async () => Number(await publication.getAttribute("data-public-revision")), { timeout: 20_000 }).toBeGreaterThan(Number(revision))
+    await expect(publication.getByRole("status").first()).toContainText("Changes sync automatically.")
+  } finally { await rusty.close() }
+})
+
 test("Given connected private board storage, when approving inspection from Rusty, then show its checked status without credentials and retain an actionable access failure", async ({ page, context, baseURL }, info) => {
   test.setTimeout(90_000)
   await page.goto("/")

@@ -132,7 +132,7 @@ async function stopRusty(child: ChildProcess): Promise<void> {
   if (!await exited(2_000)) throw new Error("Rusty process did not exit; preserving its state directory")
 }
 
-test("Given an interrupted owner update and newer admitted cards, when authenticated status confirms the old base, then retry current content and reject the delayed old CAS request", async () => {
+test("Given a saved owner authority and an interrupted public update without a Mesh credential, when status confirms the old revision, then retry current content and reject the delayed old CAS request", async () => {
   await initializeNativeAutomerge()
   stubWindow("http://localhost")
   const owner = await bootstrapIdentity("Recovering publisher")
@@ -149,8 +149,7 @@ test("Given an interrupted owner update and newer admitted cards, when authentic
   }
   let workspace = Automerge.from(seed)
   await recordGenesisAuthority(workspace, owner)
-  const authority = (await peerStore.getWorkspaceAuthority(workspaceId))!
-  const credential = vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue({ ...authority, transportSecret: "test-secret" })
+  expect(await peerStore.getWorkspaceCredential(workspaceId)).toBeNull()
   const service = await startRusty()
   const scope = effectScope()
   try {
@@ -171,8 +170,8 @@ test("Given an interrupted owner update and newer admitted cards, when authentic
       workspaceId: () => workspaceId, boardId: () => board.id, boardTitle: () => board.title, document: () => workspace,
       owner: () => true, profile: () => owner, sourceVersion: () => version.value,
       sourceHeads: () => Automerge.getHeads(workspace), debounceMs: 0 }))!
-    await vi.waitFor(() => expect(delayed).toBeDefined(), { timeout: 10_000 })
-    await vi.waitFor(() => expect(access.busy.value).toBe(false))
+    await vi.waitFor(() => expect(access.error.value).toContain("Simulated interrupted publication"), { timeout: 10_000 })
+    expect(delayed).toBeDefined()
     const key = publicationRecordKey(service.origin, workspaceId, board.id, owner)
     expect(parsePublicationRecord(await readLocal(key))?.intent).toMatchObject({ action: "update", expectedRevision: 1 })
     expect((await readPublicBoardManagementState({ origin: service.origin, boardId: board.id, profile: owner })).revision).toBe(1)
@@ -194,7 +193,6 @@ test("Given an interrupted owner update and newer admitted cards, when authentic
     expect(current.projection?.cards.find(card => card.id === "elearnio")?.title).toBe("elearnio")
   } finally {
     scope.stop()
-    credential.mockRestore()
     Automerge.free(workspace)
     await stopRusty(service.child)
     await rm(service.directory, { recursive: true, force: true })
@@ -226,10 +224,7 @@ test.each([false, true])("Given an owner-published board and durable editor auth
     const grant = await createWorkspaceGrant(owner, workspaceId, editor.identity.personId, "editor", epoch)
     await defaultProofStore.putGrant(earlier.payload.grantId, earlier)
     await defaultProofStore.putGrant(grant.payload.grantId, grant)
-    const credential = vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue({ ...authority, transportSecret: "test-secret" })
-    let deliveryPolicy: PublicBoardDeliveryPolicyEvidence
-    try { deliveryPolicy = await buildPublicBoardDeliveryPolicy(owner, workspaceId, board.id, 1) }
-    finally { credential.mockRestore() }
+    const deliveryPolicy = await buildPublicBoardDeliveryPolicy(owner, workspaceId, board.id, 1)
     expect(deliveryPolicy.policy.payload.acceptedGrants).toContainEqual(grant)
     stubWindow(service.origin)
     await publishBoardSnapshot({ origin: service.origin, boardId: board.id, workspaceId, document: workspace, profile: owner,

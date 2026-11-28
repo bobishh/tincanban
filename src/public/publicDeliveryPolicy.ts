@@ -5,9 +5,9 @@ import { automationLifecycle } from "../domain/automationLifecycle"
 import { defaultProofStore, validateCertificateChain } from "../domain/proofs"
 import { signWithContext, signingEvidence } from "../domain/signingContext"
 import { workspaceOwnerSigningContext } from "../sync/workspaceOwnerSigning"
-import { deviceRevocations, hasLeftWorkspace, isDeviceRevoked, isGrantRevoked } from "../sync/durableMeshBase"
-import { peerStore } from "../sync/peerStore"
-import { workspaceAuthorityFingerprint } from "../sync/authorityFingerprint"
+import { deviceRevocations, isDeviceRevoked, isGrantRevoked } from "../sync/durableMeshBase"
+import { peerStore, type WorkspaceAuthorityRecord } from "../sync/peerStore"
+import { authorityValidationFingerprint } from "../sync/authorityFingerprint"
 import { verifyWorkspaceGrant } from "../sync/meshRecords"
 
 type PublicBoardDeliveryPolicy = {
@@ -38,26 +38,14 @@ export function publicBoardDeliveryPolicyContentHash(evidence: PublicBoardDelive
   })))
 }
 
-function assertOwnerAuthority(credential: Awaited<ReturnType<typeof peerStore.getWorkspaceCredential>>,
-  authority: Awaited<ReturnType<typeof peerStore.getWorkspaceAuthority>>, profile: LocalProfile, workspaceId: string, generation: number) {
-  if (!credential || !authority || credential.workspaceId !== workspaceId || authority.workspaceId !== workspaceId ||
-      credential.ownerPersonId !== profile.identity.personId || credential.ownerPublicKey !== profile.identity.publicKey ||
-      authority.ownerPersonId !== profile.identity.personId || authority.ownerPublicKey !== profile.identity.publicKey ||
-      !Number.isSafeInteger(generation) || generation < 1) throw new Error("Current owner authority is unavailable for public delivery policy")
-}
-
-function isRevoked(credential: NonNullable<Awaited<ReturnType<typeof peerStore.getWorkspaceCredential>>>, grant: WorkspaceGrant) {
-  return isGrantRevoked(credential, grant.payload.personId, grant) || hasLeftWorkspace(credential, grant.payload.personId, grant)
-}
-
-async function collectActiveGrants(workspaceId: string, boardId: string, grants: WorkspaceGrant[], credential: NonNullable<Awaited<ReturnType<typeof peerStore.getWorkspaceCredential>>>, certificates: DeviceCertificate[]) {
+async function collectActiveGrants(workspaceId: string, boardId: string, grants: WorkspaceGrant[], authority: WorkspaceAuthorityRecord, certificates: DeviceCertificate[]) {
   const acceptedGrants: WorkspaceGrant[] = [], revokedGrantIds = new Set<string>()
   for (const grant of grants) {
-    const disposition = grantDisposition(grant, workspaceId, boardId, credential)
+    const disposition = grantDisposition(grant, workspaceId, boardId, authority)
     if (disposition === "revoked") { revokedGrantIds.add(grant.payload.grantId); continue }
     if (disposition === "skip") continue
     const role = await verifyWorkspaceGrant(grant, { workspaceId, personId: grant.payload.personId,
-      ownerPersonId: credential.ownerPersonId, ownerPublicKey: credential.ownerPublicKey,
+      ownerPersonId: authority.ownerPersonId, ownerPublicKey: authority.ownerPublicKey,
       ownerCertificates: certificates }).catch(() => undefined)
     if (role === "editor" || role === "automation") acceptedGrants.push(structuredClone(grant))
   }
@@ -72,11 +60,10 @@ async function collectActiveGrants(workspaceId: string, boardId: string, grants:
   if (uniqueGrants.length > 4096) throw new Error("Public delivery policy has too many active grants")
   return { acceptedGrants: uniqueGrants, revokedGrantIds: [...revokedGrantIds].sort() }
 }
-function grantDisposition(grant: WorkspaceGrant, workspaceId: string, boardId: string,
-  credential: NonNullable<Awaited<ReturnType<typeof peerStore.getWorkspaceCredential>>>) {
+function grantDisposition(grant: WorkspaceGrant, workspaceId: string, boardId: string, authority: WorkspaceAuthorityRecord) {
   const payload = grant.payload
   if (payload.workspaceId !== workspaceId || !["editor", "automation"].includes(payload.role)) return "skip"
-  if (isRevoked(credential, grant)) return "revoked"
+  if (isGrantRevoked(authority, payload.personId, grant)) return "revoked"
   if (payload.role === "automation" && (!payload.automation || payload.automation.boardId !== boardId || payload.automation.expiresAt <= Date.now())) return "skip"
   return "active"
 }
@@ -113,42 +100,45 @@ export async function buildPublicBoardDeliveryPolicy(profile: LocalProfile, work
   // Capture signed metadata before awaits; Automerge documents are proxy-backed.
   const automationGrants = automationGrantsForSource(document, workspaceId, boardId, cache, sourceVersion)
   await ensureCurrent()
-  const credential = await peerStore.getWorkspaceCredential(workspaceId)
-  const authority = await peerStore.getWorkspaceAuthority(workspaceId)
-  assertOwnerAuthority(credential, authority, profile, workspaceId, generation)
-  if (!credential || !authority) throw new Error("Workspace credential unavailable")
+  const readAuthority = async () => (await peerStore.readWorkspaceAuthorization([workspaceId]))[0]?.authority ?? null
+  const authority = await readAuthority()
+  if (!authority || !Number.isSafeInteger(generation) || generation < 1)
+    throw new Error("Current owner authority is unavailable for public delivery policy")
+  const authorityFingerprint = authorityValidationFingerprint(authority)
   const [grants, storedCertificates] = await Promise.all([defaultProofStore.listGrants(workspaceId), defaultProofStore.listCertificates()])
   await ensureCurrent()
   const allGrants = [...grants, ...automationGrants]
   const metadataFingerprint = canonicalizeJson({ workspaceId, boardId, generation,
     profile: { identity: profile.identity, device: profile.device, certificate: profile.certificate },
-    authority: workspaceAuthorityFingerprint([credential], [authority]),
+    authority: authorityFingerprint,
     grants: allGrants, certificates: storedCertificates })
   const fingerprint = () => metadataFingerprint + canonicalizeJson(allGrants.map(grant =>
     grant.payload.role === "automation" && Boolean(grant.payload.automation && grant.payload.automation.expiresAt <= Date.now())))
   const capturedFingerprint = fingerprint()
   // Metadata equality cannot replace the live guard: scope expiry, revocation, durable identity,
   // release writability and signing-key binding must still be checked on every owner poll.
-  const context = await workspaceOwnerSigningContext(profile, workspaceId, "rusty-public-board-delivery-policy", { boardId, generation }, async () =>
-    await peerStore.getWorkspaceAuthority(workspaceId) ?? await peerStore.getWorkspaceCredential(workspaceId))
+  const context = await workspaceOwnerSigningContext(profile, workspaceId, "rusty-public-board-delivery-policy", { boardId, generation }, async () => {
+    const current = await readAuthority()
+    if (authorityValidationFingerprint(current) !== authorityFingerprint) throw new Error("Workspace owner authority changed while preparing public delivery policy")
+    return current
+  })
   await ensureCurrent()
   const previous = cache && verifiedPolicies.get(cache)
   if (previous?.fingerprint === capturedFingerprint && fingerprint() === capturedFingerprint &&
       previous.deviceKey === profile.privateKeys.devicePrivateKey && previous.identityKey === profile.privateKeys.identityPrivateKey) {
     return structuredClone(previous.evidence)
   }
-  const ownerCerts = await verifiedOwnerCertificates(credential.ownerPersonId, credential.ownerPublicKey,
-    [...credential.ownerCertificates as DeviceCertificate[], ...authority.ownerCertificates as DeviceCertificate[],
-      ...storedCertificates, profile.certificate])
-  const { acceptedGrants, revokedGrantIds } = await collectActiveGrants(workspaceId, boardId, allGrants, credential, ownerCerts)
-  const revokedDeviceIds = [...new Set(deviceRevocations(credential).filter(item =>
-    isDeviceRevoked(credential, item.record.payload.personId, item.record.payload.deviceId)).map(item => item.record.payload.deviceId))].sort()
+  const ownerCerts = await verifiedOwnerCertificates(authority.ownerPersonId, authority.ownerPublicKey,
+    [...authority.ownerCertificates as DeviceCertificate[], ...storedCertificates, profile.certificate])
+  const { acceptedGrants, revokedGrantIds } = await collectActiveGrants(workspaceId, boardId, allGrants, authority, ownerCerts)
+  const revokedDeviceIds = [...new Set(deviceRevocations(authority).filter(item =>
+    isDeviceRevoked(authority, item.record.payload.personId, item.record.payload.deviceId)).map(item => item.record.payload.deviceId))].sort()
   const payload: PublicBoardDeliveryPolicy = { kind: "rusty-public-board-delivery-policy", version: 1, workspaceId, boardId,
-    generation, accessEpoch: credential.epoch, enabled: true, acceptedGrants, revokedGrantIds, revokedDeviceIds }
+    generation, accessEpoch: authority.epoch, enabled: true, acceptedGrants, revokedGrantIds, revokedDeviceIds }
   const policy = await signWithContext(context, payload)
   await ensureCurrent()
   if (canonicalizeJson(policy.payload) !== canonicalizeJson(payload)) throw new Error("Public delivery policy signer changed its payload")
-  const certificates = await verifiedOwnerCertificates(credential.ownerPersonId, credential.ownerPublicKey,
+  const certificates = await verifiedOwnerCertificates(authority.ownerPersonId, authority.ownerPublicKey,
     [...ownerCerts, ...signingEvidence(context).certificates])
   const evidence = { policy, ownerCertificates: certificates.sort((left, right) => left.signature < right.signature ? -1 : left.signature > right.signature ? 1 : 0) }
   if (cache && fingerprint() === capturedFingerprint) verifiedPolicies.set(cache, { fingerprint: capturedFingerprint,
