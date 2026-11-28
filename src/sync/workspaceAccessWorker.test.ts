@@ -13,16 +13,16 @@ vi.mock("./startupDiagnostics", () => ({
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-it("Given transferred document bytes, When checking worker access, Then the policy receives its original numeric document format", async () => {
-  const decision = vi.spyOn(WasmStateCore, "decideWorkspaceAccess").mockImplementation(input => {
+it("Given an open board, When checking worker access, Then the policy receives its local control frontiers", async () => {
+  const decision = vi.spyOn(WasmStateCore, "decideOpenWorkspaceAccess").mockImplementation((input, graph) => {
     expect(stages).toEqual(["access-worker-wasm:started", "access-worker-wasm:completed",
-      "access-worker-decode:started", "access-worker-decode:completed", "access-worker-decide:started"])
-    expect(input.snapshot.document).toEqual([1, 2, 3])
-    expect(Array.isArray(input.snapshot.document)).toBe(true)
+      "access-worker-decide:started"])
+    expect(input.snapshot.document).toEqual([])
+    expect(graph).toEqual({ boundary: [] })
     return "owner"
   })
   const { decideWorkspaceAccessInWorker } = await import("./workspaceAccessWorker")
-  const request: AccessWorkerRequest = { id: 17, diagnosticsEnabled: true, input: { snapshot: { document: new Uint8Array([1, 2, 3]) } } }
+  const request: AccessWorkerRequest = { id: 17, diagnosticsEnabled: true, input: { snapshot: { document: [] }, controlGraph: { boundary: [] } } }
   const response = decideWorkspaceAccessInWorker(request, Promise.resolve({ memory: new WebAssembly.Memory({ initial: 1 }) }))
   await expect(response).resolves.toEqual({ id: 17, role: "owner" })
   expect(decision).toHaveBeenCalledTimes(1)

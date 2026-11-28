@@ -14,7 +14,7 @@ vi.mock("./startupDiagnostics", () => ({ diagnoseStartupStep: async (stage: stri
   stages.push(`${stage}:completed`)
   return result
 } }))
-vi.mock("@meta-uber/mesh-replication/runtime", () => ({ meshRustRuntime: () => ({ state: { decideWorkspaceAccess: decision } }) }))
+vi.mock("@meta-uber/mesh-replication/runtime", () => ({ meshRustRuntime: () => ({ state: { decideOpenWorkspaceAccess: decision } }) }))
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
@@ -95,11 +95,11 @@ it("Given a caller-owned authority object, When its grant changes after validati
   await expect(decideAccess(doc, { snapshot: {}, grant: { payload: { role: "visitor" } } })).resolves.toBe("visitor")
 })
 
-it("Given uncached access, When checking permissions, Then checkpoints precede document serialization and policy execution", async () => {
+it("Given uncached access, When checking permissions, Then checkpoints precede frontier lookup and policy execution", async () => {
   stages.length = 0
   const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Access", "owner", "blank"))
   decision.mockImplementationOnce(() => {
-    expect(stages).toEqual(["access-serialize:started", "access-serialize:completed", "access-policy:started"])
+    expect(stages).toEqual(["access-history-frontiers:started", "access-history-frontiers:completed", "access-policy:started"])
     return "editor"
   })
   await expect(decideAccess(doc, { snapshot: {} })).resolves.toBe("editor")
@@ -150,22 +150,18 @@ it("revalidates an unrelated document change even with identical authority", asy
   expect(decision).toHaveBeenCalledTimes(calls + 1)
 })
 
-it("Given browser access validation, When sending a saved document, Then ownership transfers without cloning a number array", async () => {
+it("Given an open browser document with unchanged authority, When resolving access, Then the worker receives no document bytes", async () => {
   const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Access", "owner", "blank"))
-  const expected = Automerge.save(doc)
   const messages: unknown[] = []
   class AccessWorker {
     onmessage?: (event: { data: { id: number; role: string } | { type: "ready" } }) => void
     constructor() { queueMicrotask(() => this.onmessage?.({ data: { type: "ready" } })) }
-    postMessage(request: { id: number; input: { snapshot: { document: Uint8Array } } }, transfer: Transferable[]) {
-      const document = request.input.snapshot.document
-      expect(document).toBeInstanceOf(Uint8Array)
-      expect(transfer).toEqual([document.buffer])
-      const received = structuredClone(request, { transfer })
-      expect(document.byteLength).toBe(0)
-      expect(received.input.snapshot.document).toEqual(expected)
-      messages.push(received)
-      queueMicrotask(() => this.onmessage?.({ data: { id: received.id, role: "owner" } }))
+    postMessage(request: { id: number; input: { snapshot: { document: unknown }; controlGraph: unknown } }, transfer: Transferable[]) {
+      expect(transfer).toEqual([])
+      expect(request.input.snapshot.document).toEqual([])
+      expect(request.input.controlGraph).toEqual({})
+      messages.push(request)
+      queueMicrotask(() => this.onmessage?.({ data: { id: request.id, role: "owner" } }))
     }
     terminate() {}
   }

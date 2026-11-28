@@ -186,7 +186,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     save.mockClear()
     const bundles = vi.spyOn(changeAuthorization, "exportDocumentAuthorizationBundle")
     const digest = vi.spyOn(crypto.subtle, "digest")
-    const access = vi.spyOn(meshRustRuntime().state, "decideWorkspaceAccess")
+    const access = vi.spyOn(meshRustRuntime().state, "decideOpenWorkspaceAccess")
     try {
       for (let index = 0; index < 3; index++) {
         await app.executeCommandAsync({ kind: "setEntityArchived", entityId: item.id, archived: true })

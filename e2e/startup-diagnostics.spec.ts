@@ -67,13 +67,13 @@ for (const policyChanged of [false, true]) test(`Given startup debug and ${polic
   await expect(page.locator('[data-item-id="saved-startup-card"]')).toHaveText(/Saved startup card/)
   await expect.poll(() => entries.slice(before).some(item => event(item) === "startup.phase.completed" && attr(item, "startup.stage") === "start-sync")).toBe(true)
   await expect.poll(() => entries.slice(before).some(item => event(item) === "startup.phase.completed" && attr(item, "code.operation") === "access-ui-commit")).toBe(true)
-  for (const stage of ["entry", "policy-wasm", "admission-worker-init", "automerge-wasm", "identity-load", "initial-workspace-load", "workspace-preview", "history-reclassification", policyChanged ? "reclassify-reuse-projection" : "reclassify-startup-admission", "workspace-projection", "personal-root-load", "start-sync", "access-active-workspace", "access-serialize", "access-policy", "access-worker-wasm", "access-worker-decode", "access-worker-decide", "access-current-owner", "access-ui-commit"]) {
+  for (const stage of ["entry", "policy-wasm", "admission-worker-init", "automerge-wasm", "identity-load", "initial-workspace-load", "workspace-preview", "history-reclassification", policyChanged ? "reclassify-reuse-projection" : "reclassify-startup-admission", "workspace-projection", "personal-root-load", "start-sync", "access-active-workspace", "access-history-frontiers", "access-policy", "access-worker-wasm", "access-worker-decide", "access-current-owner", "access-ui-commit"]) {
     await expect.poll(() => entries.slice(before).some(item => event(item) === "startup.phase.started" && attr(item, "code.operation") === stage), { message: `Missing checkpoint: ${stage}` }).toBe(true)
   }
   expect(entries.slice(before).some(item => event(item) === "startup.phase.started" && attr(item, "code.operation") === "reclassify-admit-history")).toBe(policyChanged)
   expect(entries.slice(before).some(item => event(item) === "startup.phase.started" && attr(item, "code.operation") === "reclassify-commit")).toBe(policyChanged)
   expect(entries.slice(before).some(item => event(item) === "startup.phase.started" && attr(item, "code.operation") === "reclassify-load-evidence")).toBe(policyChanged)
-  expect(Number(attr(entries.slice(before).find(item => event(item) === "startup.phase.completed" && attr(item, "code.operation") === "access-serialize")!, "sync.bytes"))).toBeGreaterThan(0)
+  expect(entries.slice(before).some(item => attr(item, "code.operation") === "access-serialize")).toBe(false)
   expect(Number(attr(entries.slice(before).find(item => event(item) === "startup.phase.completed" && attr(item, "code.operation") === "access-worker-wasm")!, "sync.bytes"))).toBeGreaterThan(0)
   expect(entries.slice(before).find(item => attr(item, "startup.stage") === "entry")).toBeTruthy()
   expect(JSON.stringify(entries)).not.toContain("Safari/")

@@ -1,4 +1,5 @@
 import * as Automerge from "@automerge/automerge/slim"
+import { openWorkspaceControlGraph } from "@meta-uber/mesh-replication/open-workspace-history"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { canonicalAuthorityJson } from "./authorityFingerprint"
 import type { WorkspaceDocumentV2 } from "../domain/model"
@@ -33,14 +34,10 @@ export function decideAccess(doc: Automerge.Doc<WorkspaceDocumentV2>, evidence: 
   const deadline = automationDeadline(frozen)
   const detail = { workspaceId: doc.id, bytes: 0 }
   const result = (async () => {
-    const input = await diagnoseStartupStep("access-serialize", () => {
-      const document = Automerge.save(doc)
-      detail.bytes = document.byteLength
-      return { ...frozen, snapshot: { ...frozen.snapshot, document } }
-    }, detail)
+    const controlGraph = await diagnoseStartupStep("access-history-frontiers", () => openWorkspaceControlGraph(doc, frozen.snapshot), detail)
+    const input = { ...frozen, snapshot: { ...frozen.snapshot, document: [] }, controlGraph }
     const role = await diagnoseStartupStep("access-policy", () => typeof window === "undefined"
-      ? meshRustRuntime().state.decideWorkspaceAccess({ ...input,
-        snapshot: { ...input.snapshot, document: Array.from(input.snapshot.document) } }, Date.now()) : offThread(input), detail)
+      ? meshRustRuntime().state.decideOpenWorkspaceAccess(input, controlGraph, Date.now()) : offThread(input), detail)
     return role === "automation" && deadline <= Date.now() ? "visitor" : role
   })()
   const entry: Entry = { evidence: signature, result, expires: deadline > now ? deadline : Infinity, checkedAt: now, verified: false }

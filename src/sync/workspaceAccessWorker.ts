@@ -18,11 +18,8 @@ export async function decideWorkspaceAccessInWorker(data: AccessWorkerRequest, r
     return { id: data.id, error: String(error), fatal: true }
   }
   try {
-    const input = await diagnose("access-worker-decode", () => ({ ...data.input,
-      snapshot: { ...data.input.snapshot, document: Array.from(data.input.snapshot.document) } }),
-    { workspaceId: detail.workspaceId, bytes: data.input.snapshot.document.byteLength })
     const role = await diagnose("access-worker-decide", () => {
-      const result = WasmStateCore.decideWorkspaceAccess(input, Date.now()) as WorkspaceRole
+      const result = WasmStateCore.decideOpenWorkspaceAccess(data.input, data.input.controlGraph, Date.now()) as WorkspaceRole
       detail.bytes = wasm.memory.buffer.byteLength
       return result
     }, detail)

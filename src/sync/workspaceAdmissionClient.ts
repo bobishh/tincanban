@@ -96,7 +96,7 @@ function dispatchNext(target: Worker) {
     const job = nextJob()
     const { request } = job
     try {
-      const buffers = (request.kind === "access" ? [request.input.snapshot.document.buffer]
+      const buffers = (request.kind === "access" ? []
         : [request.input.remote.buffer, ...(request.input.local ? [request.input.local.buffer] : [])]) as ArrayBuffer[]
       active = job
       target.postMessage(request, buffers)

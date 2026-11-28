@@ -9,6 +9,10 @@ test("Given a saved admitted board, When a fresh tab reloads unchanged state, Th
     await app.createItemAsync({ title: "Already admitted — Engineer", parentId: app.genericColumns.value[0].id, values: Object.fromEntries(["company", "role"].map((key, index) => [app.activeBoard.value!.preset!.bindings[`field.${key}`], ["Already admitted", "Engineer"][index]])) })
   })
   await page.addInitScript(() => {
+    new MutationObserver(() => {
+      if (document.querySelector('.brand [data-role-stamp="owner"]') && document.querySelector(".startup-notification"))
+        document.documentElement.dataset.lingeringAccess = "true"
+    }).observe(document, { childList: true, attributes: true, subtree: true })
     const OriginalWorker = Worker
     window.Worker = class extends OriginalWorker {
       constructor(url: string | URL, options?: WorkerOptions) {
@@ -16,7 +20,7 @@ test("Given a saved admitted board, When a fresh tab reloads unchanged state, Th
         if (options?.name !== "workspace-admission") return
         const send = this.postMessage.bind(this)
         this.postMessage = (message, transfer) => {
-          if (message.kind !== "access") throw new Error("Unchanged saved history must not be replayed")
+          if (message.kind !== "access" || message.input.snapshot.document?.length) throw new Error("Unchanged saved history must not be replayed or sent to resolve access")
           Reflect.apply(send, this, [message, transfer])
         }
       }
@@ -26,7 +30,38 @@ test("Given a saved admitted board, When a fresh tab reloads unchanged state, Th
   await expect(page.locator('.brand [data-role-stamp="owner"]')).toBeVisible()
   await expect(page.getByRole("button", { name: /Add lead to/ }).first()).toBeVisible()
   await expect(page.locator(".board")).toContainText("Already admitted")
+  await expect(page.locator("html")).not.toHaveAttribute("data-lingering-access", "true")
   await expect(page.getByRole("alert", { name: "Board status" })).toHaveCount(0)
+})
+
+test("Given a previously editable saved board, When this device is revoked and reloads, Then its first confirmed role is visitor", async ({ page }) => {
+  await page.goto("/")
+  await expect(page.locator('.brand [data-role-stamp="owner"]')).toBeVisible()
+  await page.evaluate(async () => {
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
+    const { peerStore } = await import("/src/sync/peerStore.ts")
+    const { createWorkspaceDeviceRevocation } = await import("/src/sync/meshRecords.ts")
+    const { getHeads } = await import("/@id/@automerge/automerge/slim")
+    const profile = app.getCurrentProfile()!
+    const doc = app.getActiveDoc()!
+    const authority = await peerStore.getWorkspaceAuthority(doc.id)
+    if (!authority) throw new Error("Missing workspace authority")
+    const revoked = await createWorkspaceDeviceRevocation(profile, doc.id, profile.identity.personId,
+      profile.device.deviceId, getHeads(doc), [profile.certificate])
+    const catalog = authority.catalog as { deviceRevocations?: unknown[] }
+    await peerStore.putWorkspaceAuthority({ ...authority, catalog: { ...catalog,
+      deviceRevocations: [...catalog.deviceRevocations ?? [], revoked] } })
+  })
+  await page.addInitScript(() => {
+    new MutationObserver(() => {
+      if (document.querySelector('.brand [data-role-stamp="owner"], .column-add-button:enabled'))
+        document.documentElement.dataset.staleBoardAccess = "true"
+    }).observe(document, { subtree: true, attributes: true, childList: true })
+  })
+  await page.reload()
+  await expect(page.locator('.brand [data-role-stamp="visitor"]')).toBeVisible()
+  await expect(page.locator(".column-add-button:enabled")).toHaveCount(0)
+  await expect(page.locator("html")).not.toHaveAttribute("data-stale-board-access", "true")
 })
 
 for (const width of [390]) for (const fail of [false, true]) test(`Given a saved board at ${width}px, When history checks ${fail ? "fail" : "are pending"}, Then a full loader reveals saved cards before compact checks and edits wait for confirmed access`, async ({ page }, info) => {

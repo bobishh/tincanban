@@ -42,7 +42,7 @@ it("Given verified history in a warm worker, When checking access, Then the same
   await vi.waitFor(() => expect(workers[0]!.requests).toHaveLength(1))
   workers[0]!.reply({ id: workers[0]!.requests[0]!.id, result })
   await admission
-  const access = client.runWorkspaceAccess({ snapshot: { workspaceId: "test", document: new Uint8Array([1]) } }, true)
+  const access = client.runWorkspaceAccess({ snapshot: { workspaceId: "test", document: [] }, controlGraph: {} }, true)
   await vi.waitFor(() => expect(workers[0]!.requests).toHaveLength(2))
   expect(workers).toHaveLength(1)
   const request = workers[0]!.requests[1]!
@@ -60,7 +60,7 @@ it("Given one check running and others waiting, When a board is opened, Then its
   worker.ready()
   await vi.waitFor(() => expect(worker.requests).toHaveLength(1))
   const background = client.runWorkspaceAdmission({ ...input(), workspaceId: "background" })
-  const openBoard = client.runWorkspaceAccess({ snapshot: { workspaceId: "opened", document: new Uint8Array([1]) } })
+  const openBoard = client.runWorkspaceAccess({ snapshot: { workspaceId: "opened", document: [] }, controlGraph: {} })
   await vi.advanceTimersByTimeAsync(0)
   expect(worker.requests).toHaveLength(1)
   selected = "opened"
@@ -78,7 +78,7 @@ it("Given one check running and others waiting, When a board is opened, Then its
 it("rejects queued history and access checks after initialization failure and starts a fresh worker on retry", async () => {
   const { runWorkspaceAdmission, runWorkspaceAccess } = await import("./workspaceAdmissionClient")
   const first = runWorkspaceAdmission(input())
-  const second = runWorkspaceAccess({ snapshot: { document: new Uint8Array([1]) } })
+  const second = runWorkspaceAccess({ snapshot: { document: [] }, controlGraph: {} })
   const firstRejected = expect(first).rejects.toThrow("WASM unavailable")
   const secondRejected = expect(second).rejects.toThrow("WASM unavailable")
   const failed = workers[0]!

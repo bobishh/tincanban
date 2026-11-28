@@ -249,9 +249,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       <SaveState :state="saveState" :settled-label="workspacePresenceSummary" aria-label="Workspace presence" />
     </BoardToolbar>
 
-    <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
-      <StartupStatus v-if="!startupCoverVisible && (!uiReady || startupError)" :message="startupMessage" :view-only="boardVisible" :error="startupError" />
-    </Transition>
+    <StartupStatus v-if="!startupCoverVisible && (!uiReady || startupError)" :message="startupMessage" :view-only="boardVisible" :error="startupError" />
 
     <MobileDrawer
       v-if="mobileDrawerRequested"
