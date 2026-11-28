@@ -27,22 +27,26 @@ test("Given a public board connected directly to Rusty, when an update fails and
   const rusty = await startRustyService({}, baseURL!)
   try {
     await connectFixtureBoard(page, rusty.origin)
-    expect(await page.evaluate(async () => {
+    const initialRevision = await page.evaluate(async origin => {
       const { useTincanban } = await import("/src/test/stateFixture.ts")
       const { peerStore } = await import("/src/sync/peerStore.ts")
-      return Boolean(await peerStore.getWorkspaceCredential(useTincanban().getActiveDoc()!.id))
-    })).toBe(false)
+      const { buildPublicBoardDeliveryPolicy } = await import("/src/public/publicDeliveryPolicy.ts")
+      const { publishBoardSnapshot } = await import("/src/public/publicationClient.ts")
+      const app = useTincanban()
+      const document = app.getActiveDoc()!, boardId = app.activeBoard.value!.id, profile = app.getCurrentProfile()!
+      if (await peerStore.getWorkspaceCredential(document.id)) throw new Error("The fixture must have no Mesh credential")
+      const deliveryPolicy = await buildPublicBoardDeliveryPolicy(profile, document.id, boardId, 1)
+      const publication = await publishBoardSnapshot({ origin, boardId, workspaceId: document.id, document, profile,
+        action: "publish", expectedRevision: 0, deliveryPolicy })
+      return publication.revision
+    }, rusty.origin)
     await page.getByRole("button", { name: "Settings", exact: true }).click()
     const settings = page.getByRole("dialog", { name: "Settings", exact: true })
     await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
     const publication = settings.getByRole("region", { name: "Public board access" })
-    const toggle = publication.getByRole("switch", { name: "Public board", exact: true })
-    await toggle.click()
-    await publication.getByRole("button", { name: "Enable public access", exact: true }).click()
     const link = publication.getByRole("link", { name: "Open public board", exact: true })
     await expect(link).toBeVisible({ timeout: 20_000 })
     await expect(publication.getByRole("status").first()).toContainText("Changes sync automatically.")
-    const revision = await publication.getAttribute("data-public-revision")
 
     const api = `${rusty.origin}/v1/public/boards/**`
     let failUpdates = true
@@ -62,7 +66,7 @@ test("Given a public board connected directly to Rusty, when an update fails and
 
     failUpdates = false
     await publication.getByRole("button", { name: "Retry", exact: true }).click()
-    await expect.poll(async () => Number(await publication.getAttribute("data-public-revision")), { timeout: 20_000 }).toBeGreaterThan(Number(revision))
+    await expect.poll(async () => Number(await publication.getAttribute("data-public-revision")), { timeout: 20_000 }).toBeGreaterThan(initialRevision)
     await expect(publication.getByRole("status").first()).toContainText("Changes sync automatically.")
   } finally { await rusty.close() }
 })
