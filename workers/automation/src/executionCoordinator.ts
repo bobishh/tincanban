@@ -743,8 +743,10 @@ export class ExecutionCoordinator {
               state: "frozen" as const, sourceHeads: JSON.parse(this.historyTransition()!.source_heads) as string[] } } : {}),
             ...(this.storageTransition() ? { storageTransition: { transitionId: this.storageTransition()!.transition_id, state: "frozen" as const } } : {}) } });
       } else if ("packet" in body) {
-        response = await this.activateManagedInstanceNow(inspector.serialize(), profile, body, origin,
-          guard, publishGuard, next => { inspector = next; });
+        response = await this.activateManagedInstanceNow(inspector, body, origin, guard, async candidate => {
+          await guard();
+          candidate.assertOwner(owner, payload.deviceId);
+        }, next => { inspector = next; });
       } else throw new TypeError("Instance action does not match its body");
       const encrypted = await encryptReplicaValue(this.env.EVENT_STORAGE_SECRET!, this.ctx.id.name!, `instance-response:${payload.nonce}`, JSON.stringify(response));
       await guard();
@@ -968,15 +970,14 @@ export class ExecutionCoordinator {
     return { profile, inspector };
   }
 
-  private async activateManagedInstanceNow(serialized: string, profile: Awaited<ReturnType<typeof profileFromIdentitySeedForDevice>>,
-    body: AutomationInstanceActivateBody, origin: string, guard: () => Promise<void>,
-    publishGuard: (serialized: string) => Promise<void>, observeInspector: (inspector: AutomationManagementInspector) => void): Promise<ActivationResult> {
+  private async activateManagedInstanceNow(prior: AutomationManagementInspector, body: AutomationInstanceActivateBody,
+    origin: string, guard: () => Promise<void>, guardCandidate: (candidate: AutomationManagementInspector) => Promise<void>,
+    observeInspector: (inspector: AutomationManagementInspector) => void): Promise<ActivationResult> {
     const packet = body.packet as AutomationActivationPacket;
     const definition = parseAutomationDefinition(packet?.definition?.payload);
     if (packet.version !== 2 || packet.workspaceId !== body.workspaceId || definition.id !== body.definitionId ||
       packet.grant?.payload?.personId !== body.executorPersonId) throw new Error("Activation differs from this existing executor and definition");
     const storageSecret = this.env.EVENT_STORAGE_SECRET!;
-    const prior = await AutomationReplica.inspectForManagement(serialized, profile, async () => {});
     const description = prior.describe(origin, body.workspaceId, body.definitionId);
     if (description.state === "deleted") throw new Error("Deleted automation cannot be renewed or adopted");
     if (description.adoptionRequired !== body.adoptLegacy) throw new Error("Confirm approval before connecting this existing Worker");
@@ -985,10 +986,13 @@ export class ExecutionCoordinator {
     const routing: AutomationIntegration = { ...(configured ?? { allowedForwarders: [] }), id: body.integrationId,
       workspaceId: body.workspaceId, scope: { version: 1, ...packet.bindings,
         expiresAt: grantExpiry === null ? null : new Date(grantExpiry).toISOString() } };
+    let candidate: AutomationManagementInspector | undefined;
     const persist = async (next: string) => {
-      await publishGuard(next);
+      const admitted = candidate;
+      if (!admitted) return; // Publish only after renewal returns the admitted replica.
+      await guardCandidate(admitted);
       const ownerPersonId = JSON.parse(next).authority.currentOwner.personId as string;
-      await this.persistReplicaState(storageSecret, next, () => publishGuard(next), () => {
+      await this.persistReplicaState(storageSecret, next, () => guardCandidate(admitted), () => {
         this.ctx.storage.sql.exec(`INSERT INTO automation_registration (singleton, owner_id, workspace_id, integration_id, routing)
           VALUES (1, ?, ?, ?, ?) ON CONFLICT(singleton) DO UPDATE SET owner_id = excluded.owner_id,
           workspace_id = excluded.workspace_id, integration_id = excluded.integration_id, routing = excluded.routing`,
@@ -996,18 +1000,16 @@ export class ExecutionCoordinator {
       });
     };
     await guard();
-    const activationPacket = this.packetWithTransport(packet);
-    const replica = body.adoptLegacy
-      ? await AutomationReplica.adoptLegacy(serialized, { ...activationPacket, persist }, profile, origin)
-      : await AutomationReplica.renew(serialized, { ...activationPacket, persist }, profile, origin);
-    observeInspector(await AutomationReplica.inspectForManagement(replica.serialize(), profile, value => this.saveReplicaState(storageSecret, value)));
+    const replica = await prior.renew({ ...this.packetWithTransport(packet), persist }, origin, body.adoptLegacy);
+    candidate = replica.managementInspector();
+    await persist(replica.serialize());
+    observeInspector(candidate);
     await guard();
     await this.scheduleEarlierAlarm(Date.now() + controlPollMs);
     try { await replica.sync(); }
     catch {
       return { ok: false, status: 503, error: "Approval saved; Rusty has not confirmed synchronization. Retry this instance." };
     }
-    observeInspector(await AutomationReplica.inspectForManagement(replica.serialize(), profile, value => this.saveReplicaState(storageSecret, value)));
     await guard();
     return { ok: true, status: replica.controlForRuntime().state, workspaceId: body.workspaceId, synced: true,
       ...(grantExpiry === null ? { access: replica.accessObservationForRuntime() } : {}) };

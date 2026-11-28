@@ -49,6 +49,16 @@ describe("signed automation instance request", () => {
       .rejects.toThrow()
   })
 
+  it("Given a slow activation, When verifying its exact signed command, Then the bounded activation proof outlasts an ordinary request", async () => {
+    const owner = await bootstrapIdentity("Automation owner")
+    const activation = input({ action: "activate", integrationId: "existing-route" })
+    const proof = await createAutomationInstanceRequest(await contextFor(owner, activation), activation)
+    const { issuedAt, expiresAt } = proof.signed.payload
+    await expect(verifyAutomationInstanceRequest(proof, expected(activation), issuedAt + 125_000)).resolves.toMatchObject(activation)
+    await expect(verifyAutomationInstanceRequest(proof, expected(activation), expiresAt)).rejects.toThrow(/expired/i)
+    await expect(verifyAutomationInstanceRequest(proof, expected({ ...activation, action: "identity" }), issuedAt + 125_000)).rejects.toThrow(/scope/i)
+  })
+
   it("Given request fields differ or violate action rules, When creating or verifying, Then reject the request", async () => {
     const owner = await bootstrapIdentity("Automation owner")
     const request = input({ action: "activate", integrationId: "legacy-route" })

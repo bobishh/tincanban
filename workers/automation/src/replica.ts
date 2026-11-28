@@ -121,6 +121,7 @@ export type ReplicaTransport = {
 
 export type AutomationManagementInspector = {
   pull: (guard: () => Promise<void>) => Promise<void>;
+  renew: (packet: AutomationActivationPacket, origin: string, adoptLegacy: boolean) => Promise<AutomationReplica>;
   drainPending: (guard: () => Promise<void>) => Promise<void>;
   rotateStorageCredentials: (nextBlind: BlindReplicaConfig, persist: (serialized: string) => Promise<void>,
     guard: () => void | Promise<void>) => Promise<AutomationManagementInspector>;
@@ -419,6 +420,11 @@ export class AutomationReplica {
     const priorBasis = await restoreSerializedHistory(prior, () => {});
     try { await validateSerialized(prior, profile, "renewal", priorBasis); }
     finally { priorBasis?.free(); }
+    return AutomationReplica.renewAdmitted(prior, packet, profile, expectedOrigin, adoptLegacy);
+  }
+
+  private static async renewAdmitted(prior: SerializedReplica, packet: AutomationActivationPacket, profile: LocalProfile,
+    expectedOrigin: string, adoptLegacy: boolean): Promise<AutomationReplica> {
     const serviceUpgrade = !adoptLegacy && isStandingGrant(packet.grant) && !isStandingGrant(prior.grant);
     const history = packet.initial.history ?? (serviceUpgrade ? prior.history?.wire : undefined);
     if (canonicalizeJson(prior.history?.wire ?? null) !== canonicalizeJson(history ?? null)) {
@@ -530,6 +536,8 @@ export class AutomationReplica {
         });
         if (!await engine.pull()) throw new Error("Automation management is still catching up; retry inspection");
       }),
+      renew: (packet: AutomationActivationPacket, origin: string, adoptLegacy: boolean) => replica.enqueue(() =>
+        AutomationReplica.renewAdmitted(JSON.parse(replica.serialize()) as SerializedReplica, packet, replica.profile, origin, adoptLegacy)),
       drainPending: (guard: () => Promise<void>) => replica.enqueue(async () => {
         const engine = replica.createEngine(async () => {
           await guard();

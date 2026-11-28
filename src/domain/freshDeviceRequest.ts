@@ -56,6 +56,7 @@ export async function verifyFreshDeviceRequest<T extends FreshDeviceRequestPaylo
   coordinates: readonly (keyof T & string)[],
   now: number,
   label: string,
+  maximumLifetimeMs = 60_000,
 ): Promise<T> {
   if (!Number.isSafeInteger(now) || now < 0) throw new TypeError(`Invalid ${label} verification time`)
   const proof = parseFreshDeviceProof(proofValue, payloadSchema, proofSchema, label) as FreshDeviceRequestProof<T>
@@ -65,7 +66,7 @@ export async function verifyFreshDeviceRequest<T extends FreshDeviceRequestPaylo
     if (payload[key] !== expected[key]) throw new Error(`${label} request ${key} does not match expected scope`)
   }
   if (payload.issuedAt > now + 5_000 || payload.expiresAt <= now || payload.expiresAt <= payload.issuedAt ||
-      payload.expiresAt - payload.issuedAt > 60_000) {
+      payload.expiresAt - payload.issuedAt > maximumLifetimeMs) {
     throw new Error(`${label} request is expired or outside its allowed lifetime`)
   }
   await verifyDeviceProofSignature(proof, payload.personId, payload.deviceId)
@@ -96,13 +97,13 @@ function parseFreshDeviceProof<T extends FreshDeviceRequestPayload>(
 }
 
 /** Make shared signer fields before any async signing operation begins. */
-export function freshDeviceRequestMetadata(context: VerifiedSigningContext, now = Date.now()) {
+export function freshDeviceRequestMetadata(context: VerifiedSigningContext, now = Date.now(), lifetimeMs = 60_000) {
   return {
     personId: context.personId,
     deviceId: context.deviceId,
     nonce: crypto.randomUUID(),
     issuedAt: now,
-    expiresAt: now + 60_000,
+    expiresAt: now + lifetimeMs,
   }
 }
 

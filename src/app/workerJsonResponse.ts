@@ -2,6 +2,7 @@ import { withRecoveryCheckpoint } from "../sync/recoveryDiagnostics"
 import { record, traceDiagnosticOperation } from "../sync/telemetry"
 
 type RequestTrace = { action: string; detail: Record<string, string | number> }
+export const automationActivationResponseTimeoutMs = 130_000
 function managementTrace(origin: string, path: string): RequestTrace | undefined {
   const action = path === "/v2/capabilities" ? "capabilities" :
     /^\/v2\/automation-instances\/(discover|identity|activate|refresh-access|prepare-storage-rotation|rotate-storage|prepare-history-baseline|activate-history-baseline)$/.exec(path)?.[1]
@@ -18,11 +19,12 @@ async function stage<T>(trace: RequestTrace | undefined, phase: string, operatio
 
 /** Bound response bytes before parsing; private mail readers and public identity readers use distinct limits. */
 export async function requestWorkerJson(origin: string, path: string, method: "GET" | "POST" | "PUT",
-  maximumBytes: number, body?: unknown, invalidJsonMessage?: string, fetcher: typeof fetch = fetch): Promise<unknown> {
+  maximumBytes: number, body?: unknown, invalidJsonMessage?: string, fetcher: typeof fetch = fetch,
+  timeoutMs = method === "GET" ? 15_000 : 60_000): Promise<unknown> {
   const trace = managementTrace(origin, path)
   const encoded = body === undefined ? undefined : await stage(trace, "serializeRequest", () => JSON.stringify(body))
   const response = await stage(trace, "fetchHeaders", () => fetcher(`${origin}${path}`, { method, mode: "cors", credentials: "omit", redirect: "error",
-    signal: AbortSignal.timeout(method === "GET" ? 15_000 : 60_000), ...(encoded === undefined ? {} : {
+    signal: AbortSignal.timeout(timeoutMs), ...(encoded === undefined ? {} : {
       headers: { "content-type": "application/json" }, body: encoded,
     }) }))
   if (trace) trace.detail["http.response.status_code"] = response.status

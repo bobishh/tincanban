@@ -39,9 +39,9 @@
 
 ## 5. Release and production recovery
 
-- [ ] 5.1 Run the relevant unit, native interoperation, and browser checks
+- [x] 5.1 Run the relevant unit, native interoperation, and browser checks
   locally, then release compatible readers, credential enforcement, and the
-  connection flow through project CI.
+  connection flow through the project release workflows.
 - [ ] 5.2 Confirm the owner can upgrade the existing Job Hunt participant.
   Verify it can renew its credential and read the board, then rerun Job Hunt
   once and verify the run and configured deliveries complete.

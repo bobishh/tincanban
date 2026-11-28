@@ -1,8 +1,9 @@
-import { expect, it } from "vitest"
+import { afterEach, expect, it, vi } from "vitest"
 import { createAutomationConnection, parseAutomationConnectionRequest } from "./automationConnection"
 
 const owner = "a".repeat(43)
 const intent = "a126f135-cc53-4849-ae8b-404d20759b09"
+afterEach(() => vi.restoreAllMocks())
 function request() {
   return { kind: "mesh-reflux-automation-request", version: 1, reflux_origin: "https://reflux.example",
     workflow_slug: "job-search-automation", intent_id: intent, owner_person_id: owner,
@@ -66,6 +67,7 @@ it("Given another Identity is signed in, when approving a workflow connection, t
 })
 
 it("Given an existing expired participant, when its owner approves regular connection, then upgrade its exact route and keep the packet after response loss", async () => {
+  const requestTimeout = vi.spyOn(AbortSignal, "timeout")
   const existing = { workspaceId: "existing-board", executorPersonId: "d".repeat(43) }
   const current = parseAutomationConnectionRequest({ ...request(),
     return_to: `https://reflux.example/workflows/job-search-automation/edit?automation_connection=${intent}` })
@@ -100,6 +102,7 @@ it("Given an existing expired participant, when its owner approves regular conne
       expect(path).toMatch(/\/instance$/)
       const body = JSON.parse(String(init?.body))
       expect(body.handoffCode).toBe(current.handoff_code)
+      expect(requestTimeout).toHaveBeenLastCalledWith(body.action === "activate" ? 130_000 : 60_000)
       if (body.action === "activate" && ++activations === 1) throw new TypeError("Response lost")
       return Response.json({ status: "active", synced: true })
     },

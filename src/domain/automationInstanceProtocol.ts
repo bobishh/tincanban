@@ -47,13 +47,17 @@ export type AutomationInstanceRequestProof = {
 }
 export type AutomationInstanceRequestExpected = z.input<typeof expectedSchema>
 
+function requestLifetimeMs(action: AutomationInstanceAction): number {
+  return action === "activate" ? 180_000 : 60_000
+}
+
 /** Sign an exact, short-lived instance request under a verified live signing context. */
 export async function createAutomationInstanceRequest(context: VerifiedSigningContext,
   inputValue: AutomationInstanceRequestInput): Promise<AutomationInstanceRequestProof> {
   const input = inputSchema.parse(captureFreshDeviceJson(inputValue, "Automation instance request"))
   const now = Date.now()
   const payload = { ...input, kind: "automation-instance-request", version: 1,
-    ...freshDeviceRequestMetadata(context, now) }
+    ...freshDeviceRequestMetadata(context, now, requestLifetimeMs(input.action)) }
   return createFreshDeviceRequest(context, payload, payloadSchema, proofSchema, "Automation instance") as
     Promise<AutomationInstanceRequestProof>
 }
@@ -63,5 +67,5 @@ export async function verifyAutomationInstanceRequest(value: unknown, expectedVa
   now = Date.now()): Promise<AutomationInstanceRequestPayload> {
   return verifyFreshDeviceRequest(value, expectedValue, payloadSchema, proofSchema, expectedSchema,
     ["action", "origin", "workspaceId", "definitionId", "integrationId", "executorPersonId", "bodyHash"], now,
-    "Automation instance")
+    "Automation instance", requestLifetimeMs(expectedValue.action))
 }

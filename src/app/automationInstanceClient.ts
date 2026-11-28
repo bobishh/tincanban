@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { withRecoveryCheckpoint } from "../sync/recoveryDiagnostics"
 import { record, traceDiagnosticOperation } from "../sync/telemetry"
-import { requestWorkerJson } from "./workerJsonResponse"
+import { automationActivationResponseTimeoutMs, requestWorkerJson } from "./workerJsonResponse"
 import { automationBodyHash } from "../domain/automationProtocol"
 import { canonicalizeJson } from "../domain/identity"
 import { isAutomationOrigin } from "../domain/automationLifecycle"
@@ -304,7 +304,8 @@ async function verifyManagementIdentity(value: unknown, expected: AutomationInst
 }
 
 async function requestJson(origin: string, path: string, method: "GET" | "POST", body?: unknown): Promise<unknown> {
-  return requestWorkerJson(origin, path, method, maxResponseBytes, body)
+  return requestWorkerJson(origin, path, method, maxResponseBytes, body, undefined, undefined,
+    path === "/v2/automation-instances/activate" ? automationActivationResponseTimeoutMs : undefined)
 }
 
 function assertOrigin(origin: string): void {

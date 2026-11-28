@@ -2,7 +2,7 @@ import { canonicalizeJson } from "../domain/identityCrypto"
 import { automationBodyHash, type AutomationOwnerRequestInput } from "../domain/automationProtocol"
 import type { AutomationWorkerIdentity, AutomationConfiguration } from "./automation"
 import { automationTypes } from "../domain/automationContract"
-import { requestWorkerJson } from "./workerJsonResponse"
+import { automationActivationResponseTimeoutMs, requestWorkerJson } from "./workerJsonResponse"
 import type { AutomationInstanceRelay, AutomationInstanceReadInput } from "./automationInstanceClient"
 import { withLocalStateWriteLock } from "../localStateLock"
 
@@ -94,7 +94,8 @@ export function createAutomationConnection(options: ConnectionOptions) {
   async function send(operation: string, body: Record<string, unknown> = {}) {
     check()
     const result = await requestWorkerJson(request.reflux_origin, `${path}/${operation}`, "POST", (operation === "instance" ? 384 : 64) * 1024,
-      { ...body, handoffCode: request.handoff_code }, "Reflux returned an invalid connection response", options.fetcher)
+      { ...body, handoffCode: request.handoff_code }, "Reflux returned an invalid connection response", options.fetcher,
+      operation === "instance" && body.action === "activate" ? automationActivationResponseTimeoutMs : undefined)
     check()
     return result as Record<string, unknown>
   }
