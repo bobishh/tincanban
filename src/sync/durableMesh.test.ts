@@ -5,9 +5,9 @@ import * as Automerge from "@automerge/automerge/slim"
 import { MeshNetworkError } from "@meta-uber/mesh-transport"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { encodePairingFrame, inspectPairingFrame } from "@meta-uber/mesh-pairing"
-import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, sha256Base64Url, signEnvelope } from "../domain/identity"
+import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, toBase64Url } from "../domain/identity"
 import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, defaultProofStore } from "../domain/proofs"
-import { createWorkspaceOwnershipTransfer, verifyWorkspaceGrant } from "./meshRecords"
+import { createWorkspaceOwnershipTransfer, keyId, verifyWorkspaceGrant } from "./meshRecords"
 import { assertRequiredMeshCapabilities, DurableMesh, isMeshDialNetworkFailure } from "./durableMesh"
 import { isNativeKeeperRoute } from "./nativeKeeperRoute"
 import { workspaceRecordSigning } from "./meshRecordSigning"
@@ -1426,6 +1426,35 @@ describe("DurableMesh peer catalog gossip", () => {
     expect(saved.at(-1)?.personId).toBe(owner.identity.personId)
     expect(saved.at(-1)?.endpoint).toBe("new-endpoint")
     await mesh.dispose()
+  })
+
+  it("Given a saved workspace with seventeen owner certificates, when Mesh prepares the owner route again, then it publishes the route", async () => {
+    resetIdentityStorageForTest()
+    const owner = await bootstrapIdentity("Owner")
+    const issuerHash = await certHashDefault(owner.certificate)
+    const enrolled = await Promise.all(Array.from({ length: 16 }, async () => {
+      const keys = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
+      const key = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey)))
+      return createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId,
+        owner.identity.personId, await keyId(key), key, issuerHash)
+    }))
+    const credential = {
+      version: 1, workspaceId: crypto.randomUUID(), ownerPersonId: owner.identity.personId,
+      ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate, ...enrolled],
+      transportSecret: "mesh-secret", epoch: 1, updatedAt: new Date().toISOString(),
+    } satisfies WorkspaceMeshCredential
+    const upsertPeer = vi.fn(async (peer: TestPeer) => peer)
+    const mesh = new DurableMesh({
+      transport: {} as never, workspaceStore: {} as never, workspace: {} as never, getProfile: async () => owner,
+      store: {
+        getWorkspaceCredential: async () => credential, getWorkspaceAuthority: async () => null,
+        getPeer: async () => null, listPeers: async () => [], upsertPeer,
+      } as never,
+    })
+    try {
+      await meshHooks(mesh).refreshOwnBundle(credential, owner, "owner-endpoint", [owner.certificate])
+      expect(upsertPeer).toHaveBeenCalledWith(expect.objectContaining({ role: "owner", endpoint: "owner-endpoint" }))
+    } finally { await mesh.dispose() }
   })
 
   it.each(["refresh", "unstable", "denied"] as const)("Given owner advertisement preparation is %s, when preparing an invitation, then retry only stale authority within a bound", async mode => {
